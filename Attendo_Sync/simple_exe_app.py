@@ -155,6 +155,13 @@ class SimpleExeApp:
 
 def main():
     root = tk.Tk()
+    icon_path = ROOT_DIR / "Atteno_Sync_Icon.ico"
+    if icon_path.exists():
+        try:
+            root.iconbitmap(str(icon_path))
+        except Exception:
+            pass
+
     app = SimpleExeApp(root)
     root.mainloop()
 
