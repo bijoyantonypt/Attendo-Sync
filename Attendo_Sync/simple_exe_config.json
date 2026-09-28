@@ -3,7 +3,7 @@
   "port": 4370,
   "timeout": 10,
   "output_file": "attendance_export.json",
-  "google_service_account_file": "C:/secure/attendance/gcloud/attendance-sync-sa.json",
-  "spreadsheet_id": "1ABC123XYZ",
-  "worksheet_name": "Attendance_Raw"
+  "google_service_account_file": "C:/secure/attendance/gcloud/attendo-sync-f3615fbacce2.json",
+  "spreadsheet_id": "1VbfEv-e-AEeYGobS-E8O31Zi1OYwtsPxLIXXXtAB0BQ",
+  "worksheet_name": "Eurobia Attendance"
 }
