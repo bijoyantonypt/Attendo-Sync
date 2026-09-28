@@ -2,5 +2,8 @@
   "device_ip": "192.168.1.201",
   "port": 4370,
   "timeout": 10,
-  "output_file": "attendance_export.json"
+  "output_file": "attendance_export.json",
+  "google_service_account_file": "C:/secure/attendance/gcloud/attendance-sync-sa.json",
+  "spreadsheet_id": "1ABC123XYZ",
+  "worksheet_name": "Attendance_Raw"
 }
