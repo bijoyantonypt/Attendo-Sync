@@ -1,0 +1,5 @@
+pyzk
+gspread==6.2.1
+google-auth==2.59.0
+Pillow
+pyinstaller

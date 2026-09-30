@@ -1,0 +1,30 @@
+{
+  "users": [
+    {"user_id": "101", "name": "Anil Kumar"},
+    {"user_id": "102", "name": "Bindu Thomas"},
+    {"user_id": "103", "name": "Charles Mathew"},
+    {"user_id": "104", "name": "Divya Nair"}
+  ],
+  "attendance": [
+    {"uid": 1,  "user_id": "101", "timestamp": "2026-09-28 08:58:12", "status": 1, "punch": 0},
+    {"uid": 2,  "user_id": "102", "timestamp": "2026-09-28 09:03:45", "status": 1, "punch": 0},
+    {"uid": 3,  "user_id": "103", "timestamp": "2026-09-28 09:10:20", "status": 1, "punch": 0},
+    {"uid": 4,  "user_id": "104", "timestamp": "2026-09-28 09:15:02", "status": 1, "punch": 0},
+    {"uid": 5,  "user_id": "101", "timestamp": "2026-09-28 18:02:33", "status": 1, "punch": 1},
+    {"uid": 6,  "user_id": "102", "timestamp": "2026-09-28 18:05:10", "status": 1, "punch": 1},
+    {"uid": 7,  "user_id": "103", "timestamp": "2026-09-28 17:45:58", "status": 1, "punch": 1},
+    {"uid": 8,  "user_id": "101", "timestamp": "2026-09-29 09:01:07", "status": 1, "punch": 0},
+    {"uid": 9,  "user_id": "101", "timestamp": "2026-09-29 09:01:31", "status": 1, "punch": 0},
+    {"uid": 10, "user_id": "102", "timestamp": "2026-09-29 08:55:40", "status": 1, "punch": 0},
+    {"uid": 11, "user_id": "103", "timestamp": "2026-09-29 09:20:15", "status": 1, "punch": 0},
+    {"uid": 12, "user_id": "104", "timestamp": "2026-09-29 09:05:50", "status": 1, "punch": 0},
+    {"uid": 13, "user_id": "101", "timestamp": "2026-09-29 18:10:44", "status": 1, "punch": 1},
+    {"uid": 14, "user_id": "102", "timestamp": "2026-09-29 18:00:03", "status": 1, "punch": 1},
+    {"uid": 15, "user_id": "104", "timestamp": "2026-09-29 13:30:26", "status": 1, "punch": 1},
+    {"uid": 16, "user_id": "101", "timestamp": "2026-09-30 08:50:19", "status": 1, "punch": 0},
+    {"uid": 17, "user_id": "102", "timestamp": "2026-09-30 09:00:00", "status": 1, "punch": 0},
+    {"uid": 18, "user_id": "103", "timestamp": "2026-09-30 09:12:37", "status": 1, "punch": 0},
+    {"uid": 19, "user_id": "104", "timestamp": "2026-09-30 09:08:21", "status": 1, "punch": 0},
+    {"uid": 20, "user_id": "999", "timestamp": "2026-09-30 09:30:00", "status": 1, "punch": 0}
+  ]
+}
