@@ -1,5 +1,7 @@
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import date
@@ -140,6 +142,19 @@ class IntegrationTests(unittest.TestCase):
             worker.upload.assert_not_called()
             self.assertEqual(len(store.snapshot()[1]), 2)
 
+    def test_dashboard_at_high_dpi(self):
+        environment = os.environ.copy()
+        environment["ATTENDO_TEST_TK_SCALING"] = "2.0"
+        result = subprocess.run(
+            [sys.executable, "-m", "unittest",
+             "test_attendance_data.IntegrationTests.test_dashboard_tabs_filters_and_pay_edit", "-v"],
+            cwd=Path(__file__).resolve().parent, env=environment,
+            capture_output=True, text=True, timeout=90,
+        )
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, output)
+        self.assertNotIn("axes sizes collapsed", output)
+
     def test_dashboard_tabs_filters_and_pay_edit(self):
         import Attendo_Sync as app
         from PIL import ImageGrab
@@ -149,6 +164,8 @@ class IntegrationTests(unittest.TestCase):
             defaults = {"device_ip": app.DEFAULT_DEVICE_IP, "port": "4370", "credentials": "",
                         "spreadsheet_id": app.SPREADSHEET_ID, "worksheet": app.WORKSHEET_NAME}
             root = app.ttkbootstrap.Window(themename="flatly")
+            if os.getenv("ATTENDO_TEST_TK_SCALING"):
+                root.tk.call("tk", "scaling", float(os.environ["ATTENDO_TEST_TK_SCALING"]))
             view = app.AttendoSyncApp(root, store, Mock(), Mock(), defaults, logo_path=app.find_resource(app.ICON_PNG))
             try:
                 self.assertEqual(len(view.notebook.tabs()), 3)
@@ -180,6 +197,11 @@ class IntegrationTests(unittest.TestCase):
                             self.assertTrue(view.navigation.winfo_ismapped())
                             self.assertGreater(view.navigation.winfo_height(), 20)
                             self.assertGreater(view.axes.get_window_extent().height, 110)
+                            self.assertGreaterEqual(view.dashboard.winfo_height(), view.dashboard.winfo_reqheight())
+                            view.dashboard_viewport.yview_moveto(1)
+                            root.update()
+                            self.assertAlmostEqual(view.dashboard_viewport.yview()[1], 1.0)
+                            view.dashboard_viewport.yview_moveto(0)
                         for button in (view.fetch_btn, view.send_btn, view.export_btn, view.settings_btn):
                             self.assertGreater(button.winfo_width(), 50)
                             self.assertLessEqual(button.winfo_rootx() + button.winfo_width(), root.winfo_rootx() + root.winfo_width())
