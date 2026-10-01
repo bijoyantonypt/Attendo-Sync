@@ -82,23 +82,39 @@ class AttendoSyncApp:
         ttk.Label(header, text="ATTENDANCE / PAYROLL", style="Surface.TLabel").pack(side="left", padx=24)
         ttk.Label(header, text="DEMO" if self.demo else "LOCAL WORKSPACE", foreground=GREEN,
                   background="white", font=("Segoe UI", 10, "bold")).pack(side="right")
-        toolbar = ttk.Frame(self.root, style="Surface.TFrame", padding=(24, 0, 24, 12))
-        toolbar.pack(fill="x")
-        ttk.Label(toolbar, text="Device IP", style="Surface.TLabel").pack(side="left", padx=(0, 8))
-        self.ip_entry = ttk.Entry(toolbar, textvariable=self.ip, width=17)
-        self.ip_entry.pack(side="left", padx=(0, 16), ipady=5)
+        toolbar = ttk.Frame(self.root, style="Surface.TFrame")
+        toolbar.pack(fill="x", padx=24, pady=(0, 12))
+        device_field = ttk.Frame(toolbar, style="Surface.TFrame")
+        ttk.Label(device_field, text="Device IP", style="Surface.TLabel").pack(side="left", padx=(0, 8))
+        self.ip_entry = ttk.Entry(device_field, textvariable=self.ip, width=17)
+        self.ip_entry.pack(side="left", ipady=5)
         self.fetch_btn = ttk.Button(toolbar, text="Fetch & Update", style="primary.TButton", command=self.start)
-        self.fetch_btn.pack(side="left", padx=(0, 8))
         self.send_btn = ttk.Button(toolbar, text="Fetch & Send", style="outline-primary.TButton",
                                    command=lambda: self.start(send=True))
-        self.send_btn.pack(side="left", padx=(0, 8))
         self.export_btn = ttk.Button(toolbar, text="Excel Export", style="outline-secondary.TButton", command=self.export)
-        self.export_btn.pack(side="left")
         self.settings_btn = ttk.Button(toolbar, text="Settings", style="outline-secondary.TButton", command=self.settings)
-        self.settings_btn.pack(side="right")
+        self.toolbar_items = (device_field, self.fetch_btn, self.send_btn, self.export_btn, self.settings_btn)
+        toolbar.bind("<Configure>", self._layout_toolbar)
         if self.demo:
             self.fetch_btn.configure(state="disabled")
             self.send_btn.configure(state="disabled")
+
+    def _layout_toolbar(self, event):
+        available_width = event.width
+        position_x = position_y = row_height = 0
+        for widget in self.toolbar_items:
+            width = widget.winfo_reqwidth()
+            height = widget.winfo_reqheight()
+            if position_x and position_x + width > available_width:
+                position_x = 0
+                position_y += row_height + 8
+                row_height = 0
+            widget.place(x=position_x, y=position_y, width=width, height=height)
+            position_x += width + 8
+            row_height = max(row_height, height)
+        required_height = position_y + row_height
+        if event.widget.winfo_reqheight() != required_height:
+            event.widget.configure(height=required_height)
 
     def _tabs(self):
         self.notebook = ttk.Notebook(self.root)

@@ -143,17 +143,19 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(len(store.snapshot()[1]), 2)
 
     def test_dashboard_at_high_dpi(self):
-        environment = os.environ.copy()
-        environment["ATTENDO_TEST_TK_SCALING"] = "2.0"
-        result = subprocess.run(
-            [sys.executable, "-m", "unittest",
-             "test_attendance_data.IntegrationTests.test_dashboard_tabs_filters_and_pay_edit", "-v"],
-            cwd=Path(__file__).resolve().parent, env=environment,
-            capture_output=True, text=True, timeout=90,
-        )
-        output = result.stdout + result.stderr
-        self.assertEqual(result.returncode, 0, output)
-        self.assertNotIn("axes sizes collapsed", output)
+        for scaling in ("2.0", "2.6667", "3.3333"):
+            with self.subTest(scaling=scaling):
+                environment = os.environ.copy()
+                environment["ATTENDO_TEST_TK_SCALING"] = scaling
+                result = subprocess.run(
+                    [sys.executable, "-m", "unittest",
+                     "test_attendance_data.IntegrationTests.test_dashboard_tabs_filters_and_pay_edit", "-v"],
+                    cwd=Path(__file__).resolve().parent, env=environment,
+                    capture_output=True, text=True, timeout=90,
+                )
+                output = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 0, output)
+                self.assertNotIn("axes sizes collapsed", output)
 
     def test_dashboard_tabs_filters_and_pay_edit(self):
         import Attendo_Sync as app
@@ -186,7 +188,7 @@ class IntegrationTests(unittest.TestCase):
                     view.edit_rate()
                 self.assertEqual(store.snapshot()[0]["101"]["daily_pay"], 150)
                 self.assertIn("150.00", view.monthly_table.item("101")["values"][-1])
-                for width, height in [(1280, 860), (1000, 700)]:
+                for width, height in [(1280, 860), (1000, 700), (1280, 860)]:
                     root.geometry(f"{width}x{height}+0+0")
                     for index in range(3):
                         view.notebook.select(index)
@@ -203,7 +205,9 @@ class IntegrationTests(unittest.TestCase):
                             self.assertAlmostEqual(view.dashboard_viewport.yview()[1], 1.0)
                             view.dashboard_viewport.yview_moveto(0)
                         for button in (view.fetch_btn, view.send_btn, view.export_btn, view.settings_btn):
+                            self.assertTrue(button.winfo_ismapped())
                             self.assertGreater(button.winfo_width(), 50)
+                            self.assertGreaterEqual(button.winfo_width(), button.winfo_reqwidth())
                             self.assertLessEqual(button.winfo_rootx() + button.winfo_width(), root.winfo_rootx() + root.winfo_width())
                         if os.getenv("ATTENDO_SCREENSHOT_DIR"):
                             output = Path(os.environ["ATTENDO_SCREENSHOT_DIR"])
