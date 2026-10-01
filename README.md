@@ -1,5 +1,125 @@
 # Attendo Sync
 
+## Current Desktop Dashboard
+
+The application now runs attendance reporting and payroll locally. Google Sheets
+is an optional raw-history backup, not a requirement for viewing or calculating data.
+The original eSSL device connection routine is unchanged.
+
+### Run
+
+For a target PC, use the standalone **Windows 10/11 x64** executable at
+`Attendo_Sync/dist/Attendo_Sync.exe`. Transfer just that EXE and double-click it.
+Python, pip, Microsoft Excel, eSSL software, and separately installed Python libraries
+are not required. GUI resources, charts, Excel writing, SQLite, and device libraries
+are bundled. The EXE extracts its runtime into the user's temporary directory on launch.
+The PC must allow running the application and writing to its temp and local-app-data
+directories. No administrator privileges are requested by the app.
+
+The target PC must reach the device IP and port (normally `192.168.29.201:4370`).
+The unchanged device routine also requires ping reachability. Network isolation,
+firewall rules, unsupported device protocols, or device passwords can prevent connection.
+Local fetching and reporting need no internet. Google backup alone requires internet,
+your service-account JSON key, and spreadsheet access; secrets are not embedded in the EXE.
+Local history belongs to each PC and is not automatically synchronized between PCs.
+
+This is not a universal binary for macOS, Linux, 32-bit Windows, or every eSSL model.
+Test it on the intended Windows PC before production use. Windows SmartScreen or
+corporate application policies may require approval for an unsigned executable.
+Do not disable security software to run it.
+
+The instructions below apply only to developers running from source or rebuilding.
+The build script creates an isolated `.build-venv`, runs the tests, and packages a
+single-file EXE so unrelated packages on the build PC are not included.
+
+Use a full Python 3.10+ installation with Tkinter on Windows, not an embedded Python runtime.
+From the repository directory:
+
+```powershell
+python -m pip install -r Attendo_Sync/Requirements.txt
+python Attendo_Sync/Attendo_Sync.py
+```
+
+To preview isolated sample data without a device or Google access:
+
+```powershell
+python Attendo_Sync/Attendo_Sync.py --demo
+```
+
+The sample dates are shifted to the latest three days when the demo database is
+first created. Demo mode disables fetching and cloud backup and uses a separate database.
+
+### Screens And Actions
+
+- **Dashboard**: current-month salary payable and average month-to-date hours per
+  employee. The line chart shows daily worked hours per employee in the selected
+  month; filter employees, hover points, or use the chart's zoom/pan/save toolbar.
+  Selecting a historical chart month does not change the current-month KPI cards.
+- **Daily Attendance**: today's date, alphabetical employee names, first clock-in,
+  last matched clock-out, summed worked hours, and punch warnings.
+- **Monthly Attendance**: select any recorded month. View completed paid days,
+  total hours, net excess/deficit hours, fractional extra days, days needing review,
+  and salary. Double-click the final **Daily pay (edit)** cell, press Enter on a
+  selected employee, or use the right-click menu to change their rate. Horizontal
+  scrolling exposes remaining columns in smaller windows.
+- **Fetch & Update**: fetch from the configured IP (default `192.168.29.201`, port
+  `4370`), merge punches into local history, and refresh all views. No Google key is needed.
+- **Fetch & Send**: perform the same local update, then back up all locally retained
+  punches to Google Sheets. Existing backup rows are never cleared; already-backed-up
+  punches are skipped. A cloud failure does not discard the local fetch.
+- **Excel Export**: save an `.xlsx` workbook containing today's attendance, the
+  selected month's payroll, all daily history, all raw punches, and payroll policy.
+- **Settings**: change the device port, service-account JSON path, spreadsheet ID,
+  and backup worksheet. Share the spreadsheet with the service account as an editor.
+  The existing six-column backup schema is supported; incompatible tabs are rejected
+  without modifying them. Run only one backup writer against a worksheet at a time.
+
+### Payroll Rules
+
+Default pay is **INR 100 for 8.5 hours**. Every employee has an editable daily rate.
+
+- Punch mode `0` is in and `1` is out. Hours are summed from same-day completed pairs;
+  breaks are excluded. Repeated in-punches retain the first entry and are flagged.
+- Missing in/out punches, unknown modes, and overnight shifts are flagged for review.
+  Incomplete days contribute any confirmed paired hours to displayed totals but are
+  excluded from paid days and payroll until valid punches arrive in a later fetch.
+  The chart leaves gaps for incomplete days and future dates.
+- Net hours = completed-day hours minus `8.5 x completed days`.
+- Extra days = `max(0, net hours / 8.5)`, retaining fractional days.
+- Salary = completed days x daily pay, plus positive extra days x daily pay x **2**.
+  Negative net hours reduce pay at the normal rate: `net hours / 8.5 x daily pay`.
+- Excess and deficit hours offset each other within the selected month. For example,
+  at INR 100/day, one 9.5-hour day pays INR 123.53; one 7.5-hour day pays INR 88.24.
+- Days with no punches have no pay and no deficit. No holiday, leave, or scheduled
+  work calendar is assumed. Average hours includes all locally known employees.
+- Rate edits recalculate **all months** using the current rate; the app confirms this
+  before saving. It does not maintain effective-dated rate changes or finalized payroll.
+
+### Storage And Verification
+
+History, employee rates, and connection settings are stored in
+`%LOCALAPPDATA%\AttendoSync\attendance.sqlite3`; demo data uses `demo.sqlite3`.
+Use `--data-dir PATH` to choose another writable location. Back up the SQLite file
+while the app is closed to preserve rates and settings; Google Sheets stores raw
+punch history only. Protect local files and exported workbooks as employee data.
+The credential file itself is never copied into the database or bundled into the EXE.
+An existing `attendance_export.json` beside the application is imported once on startup.
+
+```powershell
+python -m unittest discover -s Attendo_Sync -p "test_attendance_data.py" -v
+```
+
+Tests cover payroll, persistence, backup deduplication, Excel values, offline failure
+recovery, and real Tk window construction. They need a desktop session but do not
+contact the device or Google. Build the Windows EXE with `Attendo_Sync\build_exe.bat`;
+the output is `Attendo_Sync\dist\Attendo_Sync.exe`.
+
+## Earlier Architecture Proposal
+
+The sections below are retained as historical planning material. References to
+Apps Script, Drive reporting, cloud-primary storage, and planned modules below
+are not the behavior of the current local desktop dashboard described above.
+
 <div align="center">
 
 🏢 **Employee Attendance Tracking & Payroll System** 📊

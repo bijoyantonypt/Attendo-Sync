@@ -1,18 +1,24 @@
-﻿"""Attendo Sync: pulls attendance from an eSSL device and sends it to Google Sheets."""
+﻿"""Attendo-Sync: local attendance dashboard with optional Google Sheets backup."""
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import sys
-import threading
-from datetime import datetime
+import tempfile
+import traceback
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
-import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import messagebox
 
 import gspread
+import ttkbootstrap
 from zk import ZK
+
+from attendance_data import AttendanceStore
+from dashboard import AttendoSyncApp
 
 # Next to the EXE when frozen, so the backup export lands beside it.
 ROOT_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
@@ -30,7 +36,7 @@ DEFAULT_CREDENTIALS_FILE = "C:/secure/attendance/gcloud/attendo-sync-f3615fbacce
 SPREADSHEET_ID = "1VbfEv-e-AEeYGobS-E8O31Zi1OYwtsPxLIXXXtAB0BQ"
 WORKSHEET_NAME = "Eurobia Attendance"
 SAMPLE_WORKSHEET_NAME = "Sample_Test"
-BUILD_ID = "2026-09-30 build 4"
+BUILD_ID = "2026-10-01 dashboard"
 
 BLUE = "#2080A6"
 DARK = "#16607D"
@@ -117,7 +123,7 @@ def build_worksheet_rows(rows):
     return sheet_rows
 
 
-def upload_to_google_sheets(rows, credentials_path, worksheet_name, log=print):
+def upload_to_google_sheets(rows, credentials_path, worksheet_name, log=print, spreadsheet_id=SPREADSHEET_ID):
     credentials_file = Path(credentials_path)
     if not credentials_path or not credentials_file.is_file():
         raise ValueError(f"Key file not found: {credentials_path or '(empty)'}")
@@ -142,7 +148,8 @@ def upload_to_google_sheets(rows, credentials_path, worksheet_name, log=print):
 
     log("Connecting to Google Sheets...")
     client = gspread.service_account(filename=str(credentials_file))
-    spreadsheet = client.open_by_key(SPREADSHEET_ID)
+    client.set_timeout(30)
+    spreadsheet = client.open_by_key(spreadsheet_id)
     log(f"Opened spreadsheet: {spreadsheet.title}")
 
     try:
@@ -155,9 +162,25 @@ def upload_to_google_sheets(rows, credentials_path, worksheet_name, log=print):
             cols="20",
         )
 
-    log(f"Writing {len(rows)} rows to tab '{worksheet_name}'...")
-    worksheet.clear()
-    worksheet.append_rows(build_worksheet_rows(rows), value_input_option="RAW")
+    existing = worksheet.get_all_values()
+    header = build_worksheet_rows([])[0]
+    if existing and existing[0] != header:
+        raise ValueError("The backup worksheet has an incompatible header. Select a new empty worksheet in Settings.")
+
+    def identity(values):
+        padded = list(values) + [""] * max(0, 6 - len(values))
+        return tuple("" if padded[index] is None else str(padded[index]) for index in (0, 2, 3, 4))
+
+    known = {identity(row) for row in existing[1:]}
+    missing_rows = [] if existing else [header]
+    for row in build_worksheet_rows(rows)[1:]:
+        key = identity(row)
+        if key not in known:
+            missing_rows.append(row)
+            known.add(key)
+    log(f"Backing up {len(missing_rows) - (0 if existing else 1)} new punches to '{worksheet_name}'...")
+    for offset in range(0, len(missing_rows), 1000):
+        worksheet.append_rows(missing_rows[offset:offset + 1000], value_input_option="RAW")
     return worksheet.url
 
 
@@ -169,198 +192,94 @@ def find_resource(name):
     return None
 
 
-class AttendoSyncApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Attendo Sync")
-        self.root.geometry("560x720")
-        self.root.resizable(False, False)
-        self.root.configure(bg=BG)
+def fetch_dashboard_records(device_ip, port):
+    attendance, users = fetch_raw_attendance(device_ip, port=port, timeout=DEVICE_TIMEOUT)
+    return attendance_to_rows(attendance, users), users
 
-        icon = find_resource(ICON_ICO)
-        if icon:
+
+def standalone_self_test(report_path):
+    from attendance_reports import export_workbook
+    from openpyxl import load_workbook
+
+    root = None
+    result = {"frozen": bool(getattr(sys, "frozen", False)), "ok": False}
+    try:
+        with tempfile.TemporaryDirectory(prefix="attendo-self-test-") as folder:
+            store = AttendanceStore(Path(folder) / "history.sqlite3")
+            records = load_sample_records()
+            store.merge(records)
+            employees, rows = store.snapshot()
+            if not employees or not rows:
+                raise RuntimeError("Bundled sample records are empty.")
+            root = ttkbootstrap.Window(themename="flatly")
+            defaults = {"device_ip": DEFAULT_DEVICE_IP, "port": str(DEFAULT_PORT),
+                        "credentials": "", "spreadsheet_id": "", "worksheet": ""}
+            view = AttendoSyncApp(root, store, None, None, defaults, demo=True,
+                                 logo_path=find_resource(ICON_PNG))
+            view.month.set(rows[0]["timestamp"][:7])
+            view.refresh_month()
+            root.update()
+            view.canvas.draw()
+            view.figure.savefig(Path(folder) / "chart.png")
+            export_workbook(Path(folder) / "report.xlsx", employees, rows, view.month.get())
+            workbook = load_workbook(Path(folder) / "report.xlsx")
             try:
-                self.root.iconbitmap(str(icon))
-            except Exception:
-                pass
-
-        self._build_styles()
-        self._build_header()
-        self._build_body()
-
-    def _build_styles(self):
-        style = ttk.Style(self.root)
-        style.theme_use("clam")
-        style.configure("Card.TFrame", background="white")
-        style.configure("Field.TLabel", background="white", foreground=MUTED, font=("Segoe UI", 9))
-        style.configure("TEntry", fieldbackground="#FFFFFF", padding=6)
-        style.configure(
-            "Accent.TButton", background=BLUE, foreground="white",
-            font=("Segoe UI", 10, "bold"), padding=(14, 9), borderwidth=0,
-        )
-        style.map("Accent.TButton", background=[("active", DARK), ("disabled", "#9CC3D3")])
-        style.configure(
-            "Ghost.TButton", background="#E4ECF0", foreground=TEXT,
-            font=("Segoe UI", 10), padding=(14, 9), borderwidth=0,
-        )
-        style.map("Ghost.TButton", background=[("active", "#D3DEE4"), ("disabled", "#EEF2F4")])
-        style.configure("Browse.TButton", background="#E4ECF0", foreground=TEXT, padding=(10, 6), borderwidth=0)
-        style.map("Browse.TButton", background=[("active", "#D3DEE4")])
-        style.configure("Sync.Horizontal.TProgressbar", troughcolor="#E4ECF0", background=BLUE, borderwidth=0)
-
-    def _build_header(self):
-        header = tk.Frame(self.root, bg=BLUE)
-        header.pack(fill="x")
-
-        logo_path = find_resource(ICON_PNG)
-        self.logo = None
-        if logo_path:
-            try:
-                self.logo = tk.PhotoImage(file=str(logo_path)).subsample(6, 6)
-            except Exception:
-                self.logo = None
-        if self.logo:
-            tk.Label(header, image=self.logo, bg=BLUE).pack(side="left", padx=(20, 12), pady=14)
-
-        titles = tk.Frame(header, bg=BLUE)
-        titles.pack(side="left", pady=14)
-        tk.Label(titles, text="Attendo Sync", bg=BLUE, fg="white", font=("Segoe UI", 20, "bold")).pack(anchor="w")
-        tk.Label(titles, text="eSSL attendance to Google Sheets", bg=BLUE, fg="#D6EAF2",
-                 font=("Segoe UI", 10)).pack(anchor="w")
-
-    def _build_body(self):
-        body = tk.Frame(self.root, bg=BG)
-        body.pack(fill="both", expand=True, padx=20, pady=18)
-
-        card = ttk.Frame(body, style="Card.TFrame", padding=18)
-        card.pack(fill="x")
-
-        row = ttk.Frame(card, style="Card.TFrame")
-        row.pack(fill="x")
-        ip_col = ttk.Frame(row, style="Card.TFrame")
-        ip_col.pack(side="left", fill="x", expand=True, padx=(0, 12))
-        ttk.Label(ip_col, text="Device IP", style="Field.TLabel").pack(anchor="w")
-        self.ip_var = tk.StringVar(value=DEFAULT_DEVICE_IP)
-        ttk.Entry(ip_col, textvariable=self.ip_var, font=("Segoe UI", 11)).pack(fill="x", pady=(3, 0))
-
-        port_col = ttk.Frame(row, style="Card.TFrame")
-        port_col.pack(side="left")
-        ttk.Label(port_col, text="Port", style="Field.TLabel").pack(anchor="w")
-        self.port_var = tk.StringVar(value=str(DEFAULT_PORT))
-        ttk.Entry(port_col, textvariable=self.port_var, width=8, font=("Segoe UI", 11)).pack(pady=(3, 0))
-
-        ttk.Label(card, text="Google service account key (JSON)", style="Field.TLabel").pack(anchor="w", pady=(14, 0))
-        cred_row = ttk.Frame(card, style="Card.TFrame")
-        cred_row.pack(fill="x", pady=(3, 0))
-        self.credentials_var = tk.StringVar(value=DEFAULT_CREDENTIALS_FILE)
-        ttk.Entry(cred_row, textvariable=self.credentials_var, font=("Segoe UI", 10)).pack(
-            side="left", fill="x", expand=True, padx=(0, 8))
-        ttk.Button(cred_row, text="Browse...", style="Browse.TButton", command=self.browse_credentials).pack(side="left")
-
-        buttons = tk.Frame(body, bg=BG)
-        buttons.pack(fill="x", pady=(16, 0))
-        self.fetch_btn = ttk.Button(buttons, text="Fetch & Send to Google Sheets", style="Accent.TButton",
-                                    command=lambda: self.start(sample=False))
-        self.fetch_btn.pack(fill="x")
-        self.sample_btn = ttk.Button(buttons, text="Send Sample Data (test)", style="Ghost.TButton",
-                                     command=lambda: self.start(sample=True))
-        self.sample_btn.pack(fill="x", pady=(8, 0))
-
-        self.progress = ttk.Progressbar(body, mode="indeterminate", style="Sync.Horizontal.TProgressbar")
-        self.progress.pack(fill="x", pady=(16, 0))
-
-        log_frame = tk.Frame(body, bg=BG)
-        log_frame.pack(fill="both", expand=True, pady=(10, 0))
-        tk.Label(log_frame, text="Log", bg=BG, fg=MUTED, font=("Segoe UI", 9, "bold")).pack(anchor="w")
-        text_wrap = tk.Frame(log_frame, bg="#C9D5DC", padx=1, pady=1)
-        text_wrap.pack(fill="both", expand=True)
-        self.log_text = tk.Text(text_wrap, height=12, wrap="word", font=("Consolas", 10), bg="white", fg=TEXT,
-                                relief="flat", padx=8, pady=6, state="disabled")
-        scrollbar = ttk.Scrollbar(text_wrap, orient="vertical", command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.log_text.pack(side="left", fill="both", expand=True)
-        self.log_text.tag_configure("info", foreground=TEXT)
-        self.log_text.tag_configure("ok", foreground="#1B7F3B", font=("Consolas", 10, "bold"))
-        self.log_text.tag_configure("error", foreground="#B3261E", font=("Consolas", 10, "bold"))
-        self.log(f"Attendo Sync ready ({BUILD_ID}).")
-
-    def browse_credentials(self):
-        current = self.credentials_var.get().strip()
-        path = filedialog.askopenfilename(
-            title="Select Google service account JSON",
-            initialdir=str(Path(current).parent) if current else None,
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-        )
-        if path:
-            self.credentials_var.set(path)
-
-    def _set_busy(self, busy):
-        state = "disabled" if busy else "normal"
-        self.fetch_btn.configure(state=state)
-        self.sample_btn.configure(state=state)
-        if busy:
-            self.progress.start(12)
-        else:
-            self.progress.stop()
-
-    def log(self, text, level="info"):
-        stamp = datetime.now().strftime("%H:%M:%S")
-        self.log_text.configure(state="normal")
-        self.log_text.insert("end", f"[{stamp}] {text}\n", level)
-        self.log_text.see("end")
-        self.log_text.configure(state="disabled")
-
-    def log_threadsafe(self, text, level="info"):
-        self.root.after(0, lambda: self.log(text, level))
-
-    def start(self, sample: bool):
-        try:
-            device_ip = self.ip_var.get().strip()
-            port = int(self.port_var.get().strip())
-        except ValueError:
-            self.log("Port must be a number.", "error")
-            return
-        credentials_path = self.credentials_var.get().strip()
-        if not sample and not device_ip:
-            self.log("Device IP is required.", "error")
-            return
-        if not credentials_path:
-            self.log("Select the Google service account JSON file.", "error")
-            return
-
-        self._set_busy(True)
-        self.log("--- Sending sample data ---" if sample else "--- Fetching attendance from device ---")
-        threading.Thread(target=self.run_sync, args=(sample, device_ip, port, credentials_path), daemon=True).start()
-
-    def run_sync(self, sample, device_ip, port, credentials_path):
-        try:
-            if sample:
-                rows = load_sample_records()
-                tab = SAMPLE_WORKSHEET_NAME
-                self.log_threadsafe(f"Loaded {len(rows)} sample punches.")
-            else:
-                self.log_threadsafe(f"Connecting to device {device_ip}:{port}...")
-                rows = fetch_records(device_ip, port)
-                self.log_threadsafe(f"Fetched {len(rows)} punches from device.")
-                export_rows(rows, OUTPUT_FILE)
-                self.log_threadsafe(f"Backup saved: {OUTPUT_FILE}")
-                tab = WORKSHEET_NAME
-            upload_to_google_sheets(rows, credentials_path, tab, log=self.log_threadsafe)
-            message, error = f"Done: {len(rows)} rows sent to '{tab}'.", False
-        except Exception as exc:
-            message, error = f"Failed: {type(exc).__name__}: {exc}", True
-
-        self.root.after(0, lambda: self._finish(message, error))
-
-    def _finish(self, message, error):
-        self._set_busy(False)
-        self.log(message, "error" if error else "ok")
+                if len(workbook.sheetnames) != 5 or len(view.notebook.tabs()) != 3:
+                    raise RuntimeError("Dashboard or workbook is incomplete.")
+            finally:
+                workbook.close()
+            view.close()
+            root = None
+            result.update(ok=True, employees=len(employees), punches=len(rows),
+                          checks=["SQLite", "bundled sample", "Tk GUI", "chart rendering", "Excel export", "Google and device imports"])
+    except Exception:
+        result["error"] = traceback.format_exc()
+    finally:
+        if root is not None:
+            root.destroy()
+    report_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    return 0 if result["ok"] else 1
 
 
 def main():
-    root = tk.Tk()
-    AttendoSyncApp(root)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-test", type=Path, metavar="REPORT_JSON", help="Test bundled resources offline and exit")
+    parser.add_argument("--demo", action="store_true", help="Open isolated sample data without device or cloud access")
+    parser.add_argument("--data-dir", type=Path, default=Path(os.getenv("LOCALAPPDATA", str(ROOT_DIR))) / "AttendoSync")
+    args = parser.parse_args()
+    if args.self_test:
+        raise SystemExit(standalone_self_test(args.self_test))
+    root = ttkbootstrap.Window(themename="flatly")
+    root.withdraw()
+    try:
+        args.data_dir.mkdir(parents=True, exist_ok=True)
+        store = AttendanceStore(args.data_dir / ("demo.sqlite3" if args.demo else "attendance.sqlite3"))
+        if args.demo and not store.snapshot()[1]:
+            rows = load_sample_records()
+            last_day = max(datetime.fromisoformat(row["timestamp"]).date() for row in rows)
+            shift = date.today() - last_day
+            for row in rows:
+                row["timestamp"] = (datetime.fromisoformat(row["timestamp"]) + shift).isoformat()
+            store.merge(rows)
+        if not args.demo and not store.setting("legacy_imported") and OUTPUT_FILE.is_file():
+            store.merge(json.loads(OUTPUT_FILE.read_text(encoding="utf-8")))
+            store.set_setting("legacy_imported", "yes")
+        defaults = {"device_ip": DEFAULT_DEVICE_IP, "port": str(DEFAULT_PORT),
+                    "credentials": DEFAULT_CREDENTIALS_FILE, "spreadsheet_id": SPREADSHEET_ID,
+                    "worksheet": WORKSHEET_NAME}
+        AttendoSyncApp(root, store, fetch_dashboard_records, upload_to_google_sheets, defaults,
+                      demo=args.demo, logo_path=find_resource(ICON_PNG))
+        icon = find_resource(ICON_ICO)
+        if icon:
+            try:
+                root.iconbitmap(str(icon))
+            except Exception:
+                pass
+    except Exception as exc:
+        messagebox.showerror("Attendo-Sync startup", str(exc), parent=root)
+        root.destroy()
+        return
+    root.deiconify()
     root.mainloop()
 
 
