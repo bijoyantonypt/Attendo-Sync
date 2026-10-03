@@ -350,22 +350,27 @@ def hourly_rate(employee, month):
 def monthly_summary(employees, daily, month, today=None):
     today = today or date.today()
     remaining_days = sum(1 for day in month_days(month) if day > today)
+    # Today is excluded because employees may not have scanned yet; Sundays are never absences.
+    working_days = [day for day in month_days(month) if FIRST_VALID_DATE <= day < today and day.weekday() != 6]
+    standard_minutes = round(STANDARD_HOURS * 60)
     result = []
     for user_id, employee in sorted(employees.items(), key=lambda item: (item[1]["name"].casefold(), item[0])):
         entries = [entry for (employee_id, day), entry in daily.items()
                    if employee_id == user_id and day.strftime("%Y-%m") == month and day <= today]
         completed = [entry for entry in entries if entry["complete"]]
-        net_hours = sum(entry["hours"] for entry in completed) - len(completed) * STANDARD_HOURS
+        # Whole minutes per day, matching the excess/deficit shown in the app.
+        net_minutes = sum(round(entry["hours"] * 60) for entry in completed) - len(completed) * standard_minutes
         no_extra_pay = employee.get("no_extra_pay", False)
         rate = Decimal(str(hourly_rate(employee, month)))
-        # Net hours (excess minus deficit) are paid at the extra-pay multiplier; such roles only lose pay on a deficit.
-        paid_net_hours = min(0.0, net_hours) if no_extra_pay else net_hours
-        extra_pay = rate * Decimal(str(paid_net_hours)) * EXTRA_PAY_MULTIPLIER
+        # Roles without extra pay only lose pay on a deficit.
+        paid_minutes = min(0, net_minutes) if no_extra_pay else net_minutes
+        extra_pay = rate / 60 * paid_minutes * EXTRA_PAY_MULTIPLIER
         salary = rate * Decimal(str(len(completed) * STANDARD_HOURS)) + extra_pay
         result.append({
             "user_id": user_id, "name": employee["name"], "role": employee.get("role", DEFAULT_ROLE),
             "no_extra_pay": no_extra_pay, "days": len(completed),
-            "hours": sum(entry["hours"] for entry in entries), "net_hours": net_hours,
+            "absent_days": sum(1 for day in working_days if (user_id, day) not in daily),
+            "hours": sum(entry["hours"] for entry in entries), "net_hours": net_minutes / 60,
             "extra_pay": float(extra_pay.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
             "salary": float(max(Decimal(0), salary).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
             "hourly_pay": float(rate), "remaining_days": remaining_days,

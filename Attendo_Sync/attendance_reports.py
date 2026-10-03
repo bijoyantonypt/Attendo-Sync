@@ -61,12 +61,12 @@ def export_workbook(path, employees, rows, month, today=None, manual=None):
                       for user_id, employee in employees.items() if user_id not in recorded_ids)
     today_rows.sort(key=lambda row: (row[2].casefold(), row[1]))
     sheet("Today", daily_headers, today_rows)
-    sheet("Monthly payroll", ["Month", "Employee ID", "Employee", "Role", "Paid days", "Total hours",
-                              "Excess / deficit", "Extra pay (INR)", "Remaining days", "Salary (INR)",
-                              "Hourly pay (INR)"],
-          ([month_display(month), row["user_id"], row["name"], row["role"], row["days"], row["hours"],
-            format_duration(row["net_hours"], signed=True), row["extra_pay"], row["remaining_days"],
-            row["salary"], row["hourly_pay"]]
+    sheet("Monthly payroll", ["Month", "Employee ID", "Employee", "Role", "Worked days", "Absent days",
+                              "Total hours", "Excess / deficit", "Extra pay (INR)", "Remaining days",
+                              "Salary (INR)", "Hourly pay (INR)"],
+          ([month_display(month), row["user_id"], row["name"], row["role"], row["days"], row["absent_days"],
+            row["hours"], format_duration(row["net_hours"], signed=True), row["extra_pay"],
+            row["remaining_days"], row["salary"], row["hourly_pay"]]
            for row in monthly_summary(employees, daily, month, today)))
     sheet("Daily history", daily_headers, daily_records(lambda day: True))
     sheet("Raw punches", ["Employee ID", "Employee", "Timestamp", "Status", "Punch"],
@@ -76,10 +76,11 @@ def export_workbook(path, employees, rows, month, today=None, manual=None):
         ["Report month", month_display(month)], ["Generated on", format_date(today)], ["Standard day", "8.5 hours"],
         ["Base pay", "Completed days x 8.5 hours x hourly pay of that month"],
         ["Net hours", "Excess hours minus deficit hours: completed-day hours minus completed days x 8.5"],
-        ["Extra pay", "(Excess hours - deficit hours) x hourly pay x 2; negative when hours fall short"],
+        ["Extra pay", "(Excess minutes - deficit minutes) x (hourly pay / 60) x 2; negative when hours fall short"],
         ["Salary", "Base pay + extra pay"],
         ["No-extra-pay roles (Driver)", "No extra pay for extra hours; only a deficit reduces pay; excluded from average-hours figures"],
         ["Remaining days", "Calendar days left in the month after today"],
+        ["Absent days", "Days from 28-09-2026 up to yesterday, excluding Sundays, with no punches"],
         ["Incomplete days", "Missing clock-in or clock-out; excluded from payroll until completed"],
         ["No punches", "No pay and no deficit; no work calendar is configured"],
         ["Hourly pay changes", "A new rate applies from the month it was set onward; earlier months keep their previous rate"],

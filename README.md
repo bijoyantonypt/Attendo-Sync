@@ -61,7 +61,8 @@ first created. Demo mode disables fetching and cloud backup and uses a separate 
   Removed employees are hidden from views, payroll, exports,
   and backups, and device fetches do not bring them back. The bar chart shows each employee's
   average hours worked per day (completed days only) for the selected month or **Till date**.
-  Hover a bar for details. No-extra-pay roles are excluded from the chart and the average-hours card.
+  Hover a bar for details. No-extra-pay roles are excluded from the chart and the average-hours card,
+  which shows the average hours worked per employee per day in the selected month.
   Punches before 28-09-2026 were testing data and are not shown, exported, or backed up.
 - **Daily Attendance**: pick any recorded date (default today). Shows alphabetical employee names,
   clock-in (first scan), clock-out (last scan), hours worked, excess / deficit against 8.5 hours
@@ -69,7 +70,8 @@ first created. Demo mode disables fetching and cloud backup and uses a separate 
   clock-out). Select an employee and use **Edit clock-in / clock-out** (or double-click the row) to
   enter a missing time by hand; a manual time replaces the device scan and a cleared field
   goes back to the scan.
-- **Monthly Attendance**: select any recorded month. View role, completed paid days, total
+- **Monthly Attendance**: select any recorded month. View role, worked days, absent days (working
+  days up to yesterday with no punches; Sundays and today are not counted), total
   hours, excess / deficit in hours and minutes, extra pay, remaining days in the month, and salary.
   Double-click the final **Hourly pay (edit)** cell, press Enter on a selected employee, or use the
   right-click menu to change their rate from the selected month onward (earlier months keep their rate). Horizontal scrolling exposes remaining columns in smaller windows.
@@ -98,7 +100,8 @@ before hourly pay was introduced are converted from the old daily rate divided b
   is **Missing clock-out**. Manually entered times replace the scans.
 - Days without both times are incomplete and excluded from paid days and payroll until completed.
 - Net hours = excess minus deficit = completed-day hours minus `8.5 x completed days`.
-- Extra pay = net hours x hourly pay x **2** for the month (negative when hours fall short).
+- Extra pay = net minutes x (hourly pay / 60) x **2** for the month, using whole minutes per day
+  (at INR 60/hour one extra minute is INR 1 before the 2x; negative when hours fall short).
   Roles marked no-extra-pay (Driver) get no extra pay; only a deficit reduces their pay.
 - Salary = completed days x 8.5 x hourly pay + extra pay (never below zero).
 - Excess and deficit hours offset each other within the selected month. For example, at

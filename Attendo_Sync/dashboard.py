@@ -171,8 +171,8 @@ class AttendoSyncApp:
         self.month_totals = ttk.Label(monthly_header, anchor="center", foreground=MUTED)
         self.month_totals.pack(fill="x")
         self.monthly_table = self._table(self.monthly_tab, [
-            ("name", "Employee", 180), ("role", "Role", 100), ("days", "Paid days", 85),
-            ("hours", "Total hours", 95), ("net", "Excess / deficit", 170),
+            ("name", "Employee", 180), ("role", "Role", 100), ("days", "Worked days", 105),
+            ("absent", "Absent days", 100), ("hours", "Total hours", 95), ("net", "Excess / deficit", 170),
             ("extra", "Extra pay (INR)", 125), ("remaining", "Remaining days", 115),
             ("salary", "Salary (INR)", 120), ("rate", "Hourly pay (edit)", 150),
         ])
@@ -202,7 +202,7 @@ class AttendoSyncApp:
         metrics.pack(fill="x")
         metrics.columnconfigure((0, 1), weight=1, uniform="metrics")
         self.salary_value, self.salary_detail = self._metric(metrics, 0, "TOTAL SALARY PAYABLE", TEAL)
-        self.hours_value, self.hours_detail = self._metric(metrics, 1, "AVERAGE HOURS / EMPLOYEE", GREEN)
+        self.hours_value, self.hours_detail = self._metric(metrics, 1, "AVERAGE HOURS / EMPLOYEE / DAY", GREEN)
         chart_header = ttk.Frame(self.dashboard)
         chart_header.pack(fill="x", pady=(12, 6))
         ttk.Label(chart_header, text="Average hours worked per day", font=("Segoe UI", 14, "bold")).pack(side="left")
@@ -295,14 +295,14 @@ class AttendoSyncApp:
         key = month_key(self.kpi_month.get())
         rows = monthly_summary(self.employees, self.daily, key)
         staff = [row for row in rows if not row["no_extra_pay"]]
-        average_hours = sum(row["hours"] for row in staff) / len(staff) if staff else 0
+        worked_days = sum(row["days"] for row in staff)
+        average_hours = sum(row["hours"] for row in staff) / worked_days if worked_days else 0
         remaining = rows[0]["remaining_days"] if rows else 0
         self.salary_value.configure(text=f"INR {sum(row['salary'] for row in rows):,.2f}")
-        self.salary_detail.configure(text=f"{sum(row['days'] for row in rows)} paid employee-days | "
+        self.salary_detail.configure(text=f"{sum(row['days'] for row in rows)} worked employee-days | "
                                           f"{remaining} days remaining")
         self.hours_value.configure(text=f"{average_hours:,.2f} h")
-        self.hours_detail.configure(text=f"{len(staff)} employees (no-extra-pay roles excluded) | "
-                                         + ("Month to date" if key == self.today.strftime("%Y-%m") else "Full month"))
+        self.hours_detail.configure(text=f"Per employee per day | {len(staff)} employees (no-extra-pay roles excluded)")
 
     def refresh_daily(self):
         day = datetime.strptime(self.daily_date.get(), "%d-%m-%Y").date()
@@ -332,7 +332,7 @@ class AttendoSyncApp:
         self.monthly_table.delete(*self.monthly_table.get_children())
         for index, row in enumerate(self.monthly_rows):
             self.monthly_table.insert("", "end", iid=row["user_id"], tags=["odd"] if index % 2 else [], values=(
-                row["name"], row["role"], row["days"], f"{row['hours']:.2f}",
+                row["name"], row["role"], row["days"], row["absent_days"], f"{row['hours']:.2f}",
                 format_duration(row["net_hours"], signed=True), f"{row['extra_pay']:,.2f}",
                 row["remaining_days"], f"{row['salary']:,.2f}", f"{row['hourly_pay']:,.2f}  [Edit]",
             ))
@@ -394,7 +394,7 @@ class AttendoSyncApp:
             self.canvas.draw_idle()
 
     def _edit_rate_cell(self, event):
-        if self.monthly_table.identify_column(event.x) == "#9":
+        if self.monthly_table.identify_column(event.x) == "#10":
             user_id = self.monthly_table.identify_row(event.y)
             if user_id:
                 self.monthly_table.selection_set(user_id)
@@ -762,7 +762,7 @@ class AttendoSyncApp:
         if self.busy:
             return
         path = filedialog.asksaveasfilename(parent=self.root, defaultextension=".xlsx",
-                                           initialfile=f"Attendo-Sync-{self.month.get()}.xlsx",
+                                           initialfile=f"Attendo-Sync-{self.month.get()}-{datetime.now():%d-%m-%Y_%H-%M-%S}.xlsx",
                                            filetypes=[("Excel workbook", "*.xlsx")])
         if not path:
             return

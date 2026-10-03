@@ -84,6 +84,25 @@ class AttendanceTests(unittest.TestCase):
         self.assertEqual(monthly_summary(employees, daily_summary(rows), "2026-08", date(2026, 9, 20))[0]["remaining_days"], 0)
         self.assertEqual(monthly_summary(employees, daily_summary(rows), "2026-08", date(2026, 9, 20))[0]["salary"], 0)
 
+    def test_extra_pay_is_prorated_by_the_minute(self):
+        employees = {"101": {"name": "Anil", "hourly_pay": 60, "role": "Normal"}}
+        for clock_out, extra, salary in [("17:31:20", 2, 512), ("17:28:00", -4, 506), ("17:30:20", 0, 510)]:
+            with self.subTest(clock_out=clock_out):
+                rows = [punch("01", "09:00", 0), {**punch("01", "09:00", 1), "timestamp": f"2026-09-01T{clock_out}"}]
+                row = monthly_summary(employees, daily_summary(rows), "2026-09", date(2026, 10, 1))[0]
+                self.assertEqual((row["extra_pay"], row["salary"]), (extra, salary))
+
+    def test_absent_days_skip_sundays_today_and_testing_data(self):
+        employees = {"101": {"name": "Anil", "hourly_pay": 10, "role": "Normal"}}
+        rows = [punch("28", "09:00", 0), punch("30", "09:00", 0),
+                {**punch("01", "09:00", 0), "timestamp": "2026-10-01T09:00:00"}]
+        daily = daily_summary(rows)
+        today = date(2026, 10, 5)
+        self.assertEqual(monthly_summary(employees, daily, "2026-09", today)[0]["absent_days"], 1)
+        self.assertEqual(monthly_summary(employees, daily, "2026-10", today)[0]["absent_days"], 2)
+        self.assertEqual(monthly_summary(employees, daily, "2026-10", date(2026, 10, 4))[0]["absent_days"], 2)
+        self.assertEqual(monthly_summary(employees, daily, "2026-08", today)[0]["absent_days"], 0)
+
     def test_formatting(self):
         self.assertEqual(format_duration(2.5, signed=True), "+2 hours 30 minutes")
         self.assertEqual(format_duration(-1.25, signed=True), "-1 hour 15 minutes")
@@ -251,8 +270,9 @@ class IntegrationTests(unittest.TestCase):
             try:
                 self.assertEqual(len(workbook.sheetnames), 5)
                 payroll = workbook["Monthly payroll"]
-                self.assertEqual([cell.value for cell in payroll[1]][7:10], ["Extra pay (INR)", "Remaining days", "Salary (INR)"])
-                self.assertEqual((payroll["A2"].value, payroll["G2"].value, payroll["H2"].value, payroll["J2"].value),
+                self.assertEqual([cell.value for cell in payroll[1]][4:6], ["Worked days", "Absent days"])
+                self.assertEqual([cell.value for cell in payroll[1]][8:11], ["Extra pay (INR)", "Remaining days", "Salary (INR)"])
+                self.assertEqual((payroll["A2"].value, payroll["H2"].value, payroll["I2"].value, payroll["K2"].value),
                                  ("09-2026", "+1 hour", 20, 105))
                 self.assertEqual(payroll["C2"].data_type, "s")
                 self.assertEqual(workbook["Today"].max_row, 3)
