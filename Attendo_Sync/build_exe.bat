@@ -27,6 +27,7 @@ if exist "Atteno_Sync_Icon.png" set ICON_ARGS=%ICON_ARGS% --add-data "Atteno_Syn
     --add-data "sample_essl_attendance.json;." ^
     %ICON_ARGS% ^
     --collect-all ttkbootstrap ^
+    --noupx --version-file version_info.txt ^
     --hidden-import matplotlib.backends.backend_tkagg ^
     --exclude-module clr --exclude-module pythonnet ^
     Attendo_Sync.py
