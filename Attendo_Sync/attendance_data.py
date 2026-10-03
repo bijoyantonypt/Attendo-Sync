@@ -6,12 +6,18 @@ import math
 import sqlite3
 from collections import defaultdict
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 
 STANDARD_HOURS = 8.5
 DEFAULT_PAY = 100.0
+# Scans closer together than this are one double-scan, not a clock-in and clock-out.
+MIN_SHIFT = timedelta(minutes=60)
+# Earlier punches were testing data and are hidden from the app, exports, and backups.
+FIRST_VALID_DATE = date(2026, 9, 28)
+# Admin accounts that are not tracked as staff; retired once from the employee list.
+ADMIN_NAMES = ("bijoy", "aju")
 
 
 class AttendanceStore:
@@ -21,7 +27,8 @@ class AttendanceStore:
             connection.executescript("""
                 CREATE TABLE IF NOT EXISTS employees (
                     user_id TEXT PRIMARY KEY, name TEXT NOT NULL,
-                    daily_pay REAL NOT NULL DEFAULT 100 CHECK(daily_pay >= 0)
+                    daily_pay REAL NOT NULL DEFAULT 100 CHECK(daily_pay >= 0),
+                    active INTEGER NOT NULL DEFAULT 1
                 );
                 CREATE TABLE IF NOT EXISTS punches (
                     user_id TEXT NOT NULL, timestamp TEXT NOT NULL,
@@ -30,6 +37,19 @@ class AttendanceStore:
                 );
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             """)
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(employees)")}
+            if "active" not in columns:
+                connection.execute("ALTER TABLE employees ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+            self._retire_admins(connection)
+
+    @staticmethod
+    def _retire_admins(connection):
+        if connection.execute("SELECT 1 FROM settings WHERE key='admins_retired'").fetchone():
+            return
+        retired = connection.execute(
+            "UPDATE employees SET active=0 WHERE lower(trim(name)) IN (?, ?)", ADMIN_NAMES).rowcount
+        if retired:
+            connection.execute("INSERT OR REPLACE INTO settings VALUES ('admins_retired', 'yes')")
 
     @contextmanager
     def connect(self):
@@ -66,23 +86,49 @@ class AttendanceStore:
                     (user_id, timestamp.isoformat(), json.dumps(row.get("status")),
                      json.dumps(row.get("punch"))),
                 )
+            self._retire_admins(connection)
 
     def snapshot(self):
         with self.connect() as connection:
             employees = {
                 user_id: {"name": name, "daily_pay": daily_pay}
                 for user_id, name, daily_pay in connection.execute(
-                    "SELECT user_id, name, daily_pay FROM employees ORDER BY name COLLATE NOCASE, user_id"
+                    "SELECT user_id, name, daily_pay FROM employees WHERE active=1 "
+                    "ORDER BY name COLLATE NOCASE, user_id"
                 )
             }
             rows = [
                 {"user_id": user_id, "user_name": employees[user_id]["name"],
                  "timestamp": timestamp, "status": json.loads(status), "punch": json.loads(punch)}
                 for user_id, timestamp, status, punch in connection.execute(
-                    "SELECT user_id, timestamp, status, punch FROM punches ORDER BY timestamp, user_id"
-                )
+                    "SELECT user_id, timestamp, status, punch FROM punches WHERE timestamp >= ? "
+                    "ORDER BY timestamp, user_id", (FIRST_VALID_DATE.isoformat(),)
+                ) if user_id in employees
             ]
         return employees, rows
+
+    def add_employee(self, user_id, name, daily_pay=DEFAULT_PAY):
+        user_id = str(user_id).strip()
+        name = " ".join(str(name).split())
+        if not user_id or not name:
+            raise ValueError("Enter both the employee ID and name.")
+        daily_pay = float(daily_pay)
+        if not math.isfinite(daily_pay) or daily_pay < 0:
+            raise ValueError("Daily pay must be a finite, non-negative number.")
+        with self.connect() as connection:
+            existing = connection.execute("SELECT active FROM employees WHERE user_id=?", (user_id,)).fetchone()
+            if existing and existing[0]:
+                raise ValueError(f"Employee ID {user_id} already exists.")
+            connection.execute(
+                "INSERT INTO employees(user_id, name, daily_pay) VALUES (?, ?, ?) "
+                "ON CONFLICT(user_id) DO UPDATE SET name=excluded.name, daily_pay=excluded.daily_pay, active=1",
+                (user_id, name, daily_pay),
+            )
+
+    def remove_employee(self, user_id):
+        # Punches are kept so re-adding the ID restores its history; fetches do not re-activate it.
+        with self.connect() as connection:
+            connection.execute("UPDATE employees SET active=0 WHERE user_id=?", (str(user_id),))
 
     def set_pay(self, user_id, amount):
         amount = float(amount)
@@ -102,42 +148,20 @@ class AttendanceStore:
 
 
 def daily_summary(rows):
-    grouped = defaultdict(dict)
+    # The device reports every scan as the same punch mode, so the earliest scan of a day is the
+    # clock-in and the latest is the clock-out, whatever the punch mode says.
+    grouped = defaultdict(set)
     for row in rows:
         timestamp = datetime.fromisoformat(row["timestamp"])
-        grouped[(str(row["user_id"]), timestamp.date())][(timestamp, row.get("punch"))] = row
+        grouped[(str(row["user_id"]), timestamp.date())].add(timestamp)
     result = {}
-    for key, records in grouped.items():
-        ordered = sorted(records, key=lambda item: (item[0], str(item[1])))
-        pending = None
-        first_in = None
-        last_out = None
-        hours = 0.0
-        issues = set()
-        pairs = 0
-        for timestamp, punch in ordered:
-            if punch == 0:
-                if pending is None:
-                    pending = timestamp
-                    first_in = first_in or timestamp
-                else:
-                    issues.add("Repeated in")
-            elif punch == 1:
-                if pending is not None and timestamp > pending:
-                    hours += (timestamp - pending).total_seconds() / 3600
-                    pairs += 1
-                    last_out = timestamp
-                    pending = None
-                else:
-                    issues.add("Missing in")
-            else:
-                issues.add("Unknown punch mode")
-        if pending is not None:
-            issues.add("Missing out")
-        complete = pairs > 0 and not (issues - {"Repeated in"})
+    for key, scans in grouped.items():
+        clock_in, clock_out = min(scans), max(scans)
+        complete = clock_out - clock_in >= MIN_SHIFT
         result[key] = {
-            "clock_in": first_in, "clock_out": last_out, "hours": hours,
-            "complete": complete, "issues": ", ".join(sorted(issues)) or "Complete",
+            "clock_in": clock_in, "clock_out": clock_out if complete else None,
+            "hours": (clock_out - clock_in).total_seconds() / 3600 if complete else 0.0,
+            "complete": complete, "issues": "OK" if complete else "Missing clock-out",
         }
     return result
 

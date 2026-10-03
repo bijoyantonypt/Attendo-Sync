@@ -52,11 +52,14 @@ first created. Demo mode disables fetching and cloud backup and uses a separate 
 ### Screens And Actions
 
 - **Dashboard**: current-month salary payable and average month-to-date hours per
-  employee. The line chart shows daily worked hours per employee in the selected
-  month; filter employees, hover points, or use the chart's zoom/pan/save toolbar.
-  Selecting a historical chart month does not change the current-month KPI cards.
-- **Daily Attendance**: today's date, alphabetical employee names, first clock-in,
-  last matched clock-out, summed worked hours, and punch warnings.
+  employee. **Manage Employees** adds (device ID, name, daily pay) or removes employees;
+  removed employees are hidden from views, payroll, exports, and backups, and device
+  fetches do not bring them back. The bar chart shows each employee's average hours worked per
+  day (completed days only) for the selected month or **Till date**. Hover a bar for details.
+  Punches before 28 September 2026 were testing data and are not shown, exported, or backed up.
+  The chart month does not change the current-month KPI cards.
+- **Daily Attendance**: pick any recorded date (default today). Shows alphabetical employee names,
+  clock-in (first scan), clock-out (last scan), hours worked, and status (OK / Missing clock-out).
 - **Monthly Attendance**: select any recorded month. View completed paid days,
   total hours, net excess/deficit hours, fractional extra days, days needing review,
   and salary. Double-click the final **Daily pay (edit)** cell, press Enter on a
@@ -71,19 +74,20 @@ first created. Demo mode disables fetching and cloud backup and uses a separate 
   selected month's payroll, all daily history, all raw punches, and payroll policy.
 - **Settings**: change the device port, service-account JSON path, spreadsheet ID,
   and backup worksheet. Share the spreadsheet with the service account as an editor.
-  The existing six-column backup schema is supported; incompatible tabs are rejected
-  without modifying them. Run only one backup writer against a worksheet at a time.
+  The existing six-column backup schema is supported (header names are matched ignoring case
+  and spaces); an incompatible tab is rejected without modification and the error shows the
+  header found. Enter a new worksheet name in Settings to have the app create a fresh tab. Run only one backup writer against a worksheet at a time.
 
 ### Payroll Rules
 
 Default pay is **INR 100 for 8.5 hours**. Every employee has an editable daily rate.
 
-- Punch mode `0` is in and `1` is out. Hours are summed from same-day completed pairs;
-  breaks are excluded. Repeated in-punches retain the first entry and are flagged.
-- Missing in/out punches, unknown modes, and overnight shifts are flagged for review.
-  Incomplete days contribute any confirmed paired hours to displayed totals but are
-  excluded from paid days and payroll until valid punches arrive in a later fetch.
-  The chart leaves gaps for incomplete days and future dates.
+- The device sends every scan with the same punch mode, so the **first scan of a day is the
+  clock-in and the last scan is the clock-out**. Hours = clock-out minus clock-in. Status is
+  **OK** when both exist; a lone scan (or scans under 60 minutes apart, treated as a double-scan)
+  is **Missing clock-out**.
+- Days with a missing clock-out are 
+  until a later scan completes them. The chart leaves gaps for incomplete days and future dates.
 - Net hours = completed-day hours minus `8.5 x completed days`.
 - Extra days = `max(0, net hours / 8.5)`, retaining fractional days.
 - Salary = completed days x daily pay, plus positive extra days x daily pay x **2**.

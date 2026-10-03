@@ -72,11 +72,13 @@ def export_workbook(path, employees, rows, month, today=None):
         ["Extra days", "Positive net hours / 8.5 (fractional days)"],
         ["Overtime pay", "Extra days x daily pay x 2"],
         ["Deficit deduction", "Negative net hours / 8.5 x daily pay"],
-        ["Incomplete days", "Excluded from payroll; paired hours remain visible in totals"],
+        ["Incomplete days", "Only one scan in the day (no clock-out); excluded from payroll, shown as review days"],
         ["No punches", "No pay and no deficit; no work calendar is configured"],
         ["Daily pay changes", "Current employee rate applies to all months"],
-        ["Punch interpretation", "0 = in, 1 = out; same-day pairs; breaks excluded"],
-        ["Overnight shifts", "Not paired across midnight; flagged for review"],
+        ["Punch interpretation", "First scan of the day = clock-in; last scan = clock-out (at least 60 minutes later, otherwise a double-scan); hours = clock-out minus clock-in"],
+        ["Data start", "Punches before 28 September 2026 were testing data and are excluded"],
+        ["Status", "OK when both clock-in and clock-out exist, otherwise Missing clock-out"],
+        ["Overnight shifts", "Not paired across midnight; each calendar day is evaluated on its own"],
     ])
     path = Path(path)
     with NamedTemporaryFile(dir=path.parent, suffix=".xlsx", delete=False) as temporary:

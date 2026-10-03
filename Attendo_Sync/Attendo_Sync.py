@@ -163,9 +163,22 @@ def upload_to_google_sheets(rows, credentials_path, worksheet_name, log=print, s
         )
 
     existing = worksheet.get_all_values()
+    if not any(str(cell).strip() for row in existing for cell in row):
+        existing = []
     header = build_worksheet_rows([])[0]
-    if existing and existing[0] != header:
-        raise ValueError("The backup worksheet has an incompatible header. Select a new empty worksheet in Settings.")
+
+    def normalize(cell):
+        return str(cell or "").strip().casefold().replace(" ", "_").replace("-", "_")
+
+    if existing and [normalize(cell) for cell in existing[0][:5]] != header[:5]:
+        found = ", ".join(str(cell) for cell in existing[0] if str(cell).strip()) or "(blank first row)"
+        raise ValueError(
+            f"The backup worksheet '{worksheet_name}' has an incompatible header.\n"
+            f"Found in row 1: {found}\n"
+            f"Expected: {', '.join(header)}\n"
+            "In Settings, type a new worksheet name (the app creates it automatically), "
+            "or clear the existing tab and retry."
+        )
 
     def identity(values):
         padded = list(values) + [""] * max(0, 6 - len(values))

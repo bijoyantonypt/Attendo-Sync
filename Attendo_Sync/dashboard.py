@@ -2,6 +2,7 @@
 
 import queue
 import threading
+from collections import Counter
 from datetime import date, datetime
 from tkinter import filedialog, messagebox, simpledialog
 import tkinter as tk
@@ -10,10 +11,9 @@ from ttkbootstrap import Style
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
-from matplotlib.ticker import MaxNLocator
 from PIL import Image, ImageTk
 
-from attendance_data import daily_summary, month_days, monthly_summary
+from attendance_data import DEFAULT_PAY, STANDARD_HOURS, daily_summary, monthly_summary
 
 
 BG = "#F3F5F7"
@@ -21,6 +21,7 @@ INK = "#202A30"
 MUTED = "#65747D"
 TEAL = "#167B91"
 GREEN = "#23815C"
+ALL_DATES = "Till date"
 
 
 class AttendoSyncApp:
@@ -35,7 +36,8 @@ class AttendoSyncApp:
         self.busy = False
         self.events = queue.Queue()
         self.month = tk.StringVar(value=date.today().strftime("%Y-%m"))
-        self.employee_filter = tk.StringVar(value="All employees")
+        self.daily_date = tk.StringVar()
+        self.chart_period = tk.StringVar(value=date.today().strftime("%Y-%m"))
         self.ip = tk.StringVar(value=store.setting("device_ip", defaults["device_ip"]))
         self.status = tk.StringVar(value="Local history ready" if not demo else "Demo data | Separate local database")
         self.last_fetch = tk.StringVar()
@@ -143,10 +145,13 @@ class AttendoSyncApp:
         daily_header.pack(fill="x", pady=(0, 16))
         self.today_label = ttk.Label(daily_header, style="Title.TLabel", anchor="center")
         self.today_label.pack(fill="x")
+        self.date_picker = ttk.Combobox(daily_header, textvariable=self.daily_date, state="readonly", width=12)
+        self.date_picker.pack(pady=10)
+        self.date_picker.bind("<<ComboboxSelected>>", lambda event: self.refresh_daily())
         self.daily_count = ttk.Label(daily_header, anchor="center", foreground=MUTED)
         self.daily_count.pack(fill="x", pady=(6, 0))
         self.daily_table = self._table(self.daily_tab, [
-            ("name", "Employee", 220), ("id", "ID", 75), ("in", "Clock-in", 115),
+            ("name", "Employee", 220), ("in", "Clock-in", 115),
             ("out", "Clock-out", 115), ("hours", "Hours worked", 125), ("status", "Status", 210),
         ])
         monthly_header = ttk.Frame(self.monthly_tab)
@@ -159,7 +164,7 @@ class AttendoSyncApp:
         self.month_totals = ttk.Label(monthly_header, anchor="center", foreground=MUTED)
         self.month_totals.pack(fill="x")
         self.monthly_table = self._table(self.monthly_tab, [
-            ("name", "Employee", 190), ("id", "ID", 65), ("days", "Paid days", 90),
+            ("name", "Employee", 190), ("days", "Paid days", 90),
             ("hours", "Total hours", 100), ("net", "Excess / deficit h", 135),
             ("extra", "Extra days", 100), ("review", "Review days", 100),
             ("salary", "Salary (INR)", 130), ("rate", "Daily pay (edit)", 145),
@@ -180,6 +185,9 @@ class AttendoSyncApp:
         heading = ttk.Frame(self.dashboard)
         heading.pack(fill="x", pady=(0, 8))
         ttk.Label(heading, text="Monthly overview", style="Title.TLabel").pack(side="left")
+        self.manage_btn = ttk.Button(heading, text="Manage Employees", style="outline-primary.TButton",
+                                     command=self.manage_employees)
+        self.manage_btn.pack(side="left", padx=20)
         self.current_month_label = ttk.Label(heading, foreground=MUTED)
         self.current_month_label.pack(side="right")
         metrics = ttk.Frame(self.dashboard)
@@ -189,13 +197,10 @@ class AttendoSyncApp:
         self.hours_value, self.hours_detail = self._metric(metrics, 1, "AVERAGE HOURS / EMPLOYEE", GREEN)
         chart_header = ttk.Frame(self.dashboard)
         chart_header.pack(fill="x", pady=(12, 6))
-        ttk.Label(chart_header, text="Attendance by employee", font=("Segoe UI", 14, "bold")).pack(side="left")
-        self.chart_month_picker = ttk.Combobox(chart_header, textvariable=self.month, state="readonly", width=10)
+        ttk.Label(chart_header, text="Average hours worked per day", font=("Segoe UI", 14, "bold")).pack(side="left")
+        self.chart_month_picker = ttk.Combobox(chart_header, textvariable=self.chart_period, state="readonly", width=12)
         self.chart_month_picker.pack(side="right")
-        self.chart_month_picker.bind("<<ComboboxSelected>>", lambda event: self.refresh_month())
-        self.employee_picker = ttk.Combobox(chart_header, textvariable=self.employee_filter, state="readonly", width=24)
-        self.employee_picker.pack(side="right", padx=10)
-        self.employee_picker.bind("<<ComboboxSelected>>", lambda event: self.draw_chart())
+        self.chart_month_picker.bind("<<ComboboxSelected>>", lambda event: self.draw_chart())
         self.figure = Figure(figsize=(9, 3.5), dpi=100, facecolor="white", layout="constrained")
         self.axes = self.figure.add_subplot(111)
         chart_height = round(320 * self.root.winfo_fpixels("1i") / 96)
@@ -250,17 +255,26 @@ class AttendoSyncApp:
         self.employees, self.rows = self.store.snapshot()
         self.daily = daily_summary(self.rows)
         today = date.today()
+        previous_today = getattr(self, "today", today)
         self.today = today
         current = today.strftime("%Y-%m")
         months = sorted({row["timestamp"][:7] for row in self.rows} | {current}, reverse=True)
-        for picker in (self.month_picker, self.chart_month_picker):
-            picker.configure(values=months)
+        self.month_picker.configure(values=months)
         if self.month.get() not in months:
             self.month.set(current)
-        self.filter_ids = {f"{employee['name']} ({user_id})": user_id for user_id, employee in self.employees.items()}
-        self.employee_picker.configure(values=["All employees", *self.filter_ids])
-        if self.employee_filter.get() not in self.filter_ids:
-            self.employee_filter.set("All employees")
+        dates = sorted({day.isoformat() for _, day in self.daily} | {today.isoformat()}, reverse=True)
+        self.date_picker.configure(values=dates)
+        if self.daily_date.get() not in dates or (today != previous_today
+                                                  and self.daily_date.get() == previous_today.isoformat()):
+            self.daily_date.set(today.isoformat())
+        names = Counter(employee["name"] for employee in self.employees.values())
+        self.employee_labels = {user_id: employee["name"] if names[employee["name"]] == 1
+                                else f"{employee['name']} ({user_id})"
+                                for user_id, employee in self.employees.items()}
+        self.filter_ids = None
+        self.chart_month_picker.configure(values=[ALL_DATES, *months])
+        if self.chart_period.get() not in (ALL_DATES, *months):
+            self.chart_period.set(current)
         current_rows = monthly_summary(self.employees, self.daily, current)
         total_salary = sum(row["salary"] for row in current_rows)
         average_hours = sum(row["hours"] for row in current_rows) / len(current_rows) if current_rows else 0
@@ -270,24 +284,28 @@ class AttendoSyncApp:
         self.hours_value.configure(text=f"{average_hours:,.2f} h")
         self.hours_detail.configure(text=f"{len(self.employees)} employees | Month to date")
         self.current_month_label.configure(text=today.strftime("%B %Y"))
-        self.today_label.configure(text=today.strftime("%A, %d %B %Y"))
+        self.last_fetch.set("Last fetch: " + self.store.setting("last_fetch", "Never"))
+        self.refresh_daily()
+        self.refresh_month()
+
+    def refresh_daily(self):
+        day = date.fromisoformat(self.daily_date.get())
+        self.today_label.configure(text=day.strftime("%A, %d %B %Y"))
         self.daily_table.delete(*self.daily_table.get_children())
         present = 0
         for index, (user_id, employee) in enumerate(self.employees.items()):
-            entry = self.daily.get((user_id, today))
+            entry = self.daily.get((user_id, day))
             present += bool(entry)
-            values = [employee["name"], user_id, "--", "--", "0.00", "No punches"]
+            values = [employee["name"], "--", "--", "0.00", "No punches"]
             tags = ["odd"] if index % 2 else []
             if entry:
-                values[2:] = [entry["clock_in"].strftime("%H:%M:%S") if entry["clock_in"] else "--",
+                values[1:] = [entry["clock_in"].strftime("%H:%M:%S") if entry["clock_in"] else "--",
                               entry["clock_out"].strftime("%H:%M:%S") if entry["clock_out"] else "--",
                               f"{entry['hours']:.2f}", entry["issues"]]
                 if not entry["complete"]:
                     tags.append("review")
             self.daily_table.insert("", "end", iid=user_id, values=values, tags=tags)
         self.daily_count.configure(text=f"{present} with punches | {len(self.employees)} employees")
-        self.last_fetch.set("Last fetch: " + self.store.setting("last_fetch", "Never"))
-        self.refresh_month()
 
     def refresh_month(self):
         self.month_label.configure(text=datetime.strptime(self.month.get(), "%Y-%m").strftime("%B %Y"))
@@ -298,7 +316,7 @@ class AttendoSyncApp:
             if row["review_days"]:
                 tags.append("review")
             self.monthly_table.insert("", "end", iid=row["user_id"], tags=tags, values=(
-                row["name"], row["user_id"], row["days"], f"{row['hours']:.2f}", f"{row['net_hours']:+.2f}",
+                row["name"], row["days"], f"{row['hours']:.2f}", f"{row['net_hours']:+.2f}",
                 f"{row['extra_days']:.3f}", row["review_days"], f"{row['salary']:,.2f}", f"{row['daily_pay']:,.2f}  [Edit]",
             ))
         self.month_totals.configure(text=f"INR {sum(row['salary'] for row in self.monthly_rows):,.2f} payable"
@@ -308,37 +326,29 @@ class AttendoSyncApp:
 
     def draw_chart(self):
         self.axes.clear()
-        self.chart_lines = []
-        days = month_days(self.month.get())
-        selected = self.filter_ids.get(self.employee_filter.get())
-        colors = [TEAL, "#D17631", GREEN, "#AF496A", "#5D63A0", "#947533", "#4675AD", "#676B70"]
-        has_data = False
-        for index, (user_id, employee) in enumerate(self.employees.items()):
-            if selected is not None and user_id != selected:
-                continue
-            values = []
-            for day in days:
-                entry = self.daily.get((user_id, day))
-                has_data = has_data or bool(entry)
-                values.append(float("nan") if day > date.today() or (entry and not entry["complete"])
-                              else entry["hours"] if entry else 0)
-            line, = self.axes.plot([day.day for day in days], values, label=f"{employee['name']} ({user_id})",
-                                   color=colors[index % len(colors)], linewidth=1.8, marker="o", markersize=3)
-            self.chart_lines.append(line)
-        self.axes.axhline(8.5, color="#99A7AA", linestyle="--", linewidth=1)
-        self.axes.set_ylabel("Worked hours", color=MUTED)
-        self.axes.set_xlabel(datetime.strptime(self.month.get(), "%Y-%m").strftime("%B %Y"), color=MUTED)
-        self.axes.set_xlim(0.5, len(days) + 0.5)
+        period = self.chart_period.get()
+        in_period = (lambda day: day <= date.today()) if period == ALL_DATES else (
+            lambda day: day.strftime("%Y-%m") == period and day <= date.today())
+        self.chart_info = []
+        for user_id, employee in self.employees.items():
+            hours = [entry["hours"] for (employee_id, day), entry in self.daily.items()
+                     if employee_id == user_id and entry["complete"] and in_period(day)]
+            self.chart_info.append((self.employee_labels[user_id], sum(hours) / len(hours) if hours else 0.0, len(hours)))
+        positions = range(len(self.chart_info))
+        self.chart_bars = self.axes.bar(positions, [info[1] for info in self.chart_info], color=TEAL, width=0.65)
+        self.axes.axhline(STANDARD_HOURS, color="#99A7AA", linestyle="--", linewidth=1)
+        self.axes.set_xticks(list(positions), [info[0] for info in self.chart_info], rotation=45, ha="right", fontsize=8)
+        self.axes.set_ylabel("Average hours per day", color=MUTED)
+        self.axes.set_xlabel("All dates to today" if period == ALL_DATES
+                             else datetime.strptime(period, "%Y-%m").strftime("%B %Y"), color=MUTED)
         self.axes.set_ylim(bottom=0, top=max(10, self.axes.get_ylim()[1]))
-        self.axes.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=16))
         self.axes.grid(axis="y", color="#E6EBEE")
+        self.axes.set_axisbelow(True)
         self.axes.spines[["top", "right"]].set_visible(False)
         self.axes.spines[["left", "bottom"]].set_color("#D3DCE0")
         self.axes.tick_params(colors=MUTED)
-        if self.chart_lines and len(self.chart_lines) <= 8:
-            self.axes.legend(loc="upper left", fontsize=8, frameon=False, ncol=2)
-        if not has_data:
-            self.axes.text(0.5, 0.5, "No attendance records for this month", transform=self.axes.transAxes,
+        if not any(info[2] for info in self.chart_info):
+            self.axes.text(0.5, 0.5, "No completed attendance days for this period", transform=self.axes.transAxes,
                            ha="center", va="center", color=MUTED, fontsize=12)
         self.annotation = self.axes.annotate("", xy=(0, 0), xytext=(10, 12), textcoords="offset points",
                                              bbox={"boxstyle": "round,pad=0.5", "fc": "white", "ec": "#CCD8DC"})
@@ -348,15 +358,13 @@ class AttendoSyncApp:
 
     def _chart_hover(self, event):
         if event.inaxes == self.axes and not self.navigation.mode:
-            for line in self.chart_lines:
-                hit, details = line.contains(event)
-                if hit:
-                    index = details["ind"][0]
-                    day, hours = line.get_data()[0][index], line.get_data()[1][index]
-                    self.annotation.xy = (day, hours)
-                    self.annotation.set_text(f"{line.get_label()}\nDay {day}: {hours:.2f} h")
-                    self.annotation.set_position((-12 if day > 16 else 12, 12))
-                    self.annotation.set_ha("right" if day > 16 else "left")
+            for bar, (label, average, days) in zip(self.chart_bars, self.chart_info):
+                if bar.contains(event)[0]:
+                    self.annotation.xy = (bar.get_x() + bar.get_width() / 2, average)
+                    self.annotation.set_text(f"{label}\n{average:.2f} h average over {days} day(s)")
+                    right_half = bar.get_x() > len(self.chart_info) / 2
+                    self.annotation.set_position((-12 if right_half else 12, 12))
+                    self.annotation.set_ha("right" if right_half else "left")
                     self.annotation.set_visible(True)
                     self.canvas.draw_idle()
                     return
@@ -365,7 +373,7 @@ class AttendoSyncApp:
             self.canvas.draw_idle()
 
     def _edit_rate_cell(self, event):
-        if self.monthly_table.identify_column(event.x) == "#9":
+        if self.monthly_table.identify_column(event.x) == "#8":
             user_id = self.monthly_table.identify_row(event.y)
             if user_id:
                 self.monthly_table.selection_set(user_id)
@@ -383,7 +391,7 @@ class AttendoSyncApp:
             return
         user_id = selection[0]
         employee = self.employees[user_id]
-        amount = simpledialog.askfloat("Daily pay", f"{employee['name']} ({user_id})\nDaily pay in INR (8.5 hours):",
+        amount = simpledialog.askfloat("Daily pay", f"{employee['name']}\nDaily pay in INR (8.5 hours):",
                                        initialvalue=employee["daily_pay"], minvalue=0, parent=self.root)
         if amount is None:
             return
@@ -395,6 +403,70 @@ class AttendoSyncApp:
             self.status.set(f"Daily pay updated for {employee['name']}")
         except (ValueError, OSError) as exc:
             messagebox.showerror("Daily pay", str(exc), parent=self.root)
+
+    def manage_employees(self):
+        if self.busy:
+            return
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Manage employees")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        content = ttk.Frame(dialog, padding=24)
+        content.pack(fill="both", expand=True)
+        count = ttk.Label(content, font=("Segoe UI", 14, "bold"))
+        count.pack(anchor="w", pady=(0, 8))
+        table = self._table(content, [("name", "Employee", 260), ("pay", "Daily pay (INR)", 140)])
+        table.configure(height=8)
+        table.master.pack_configure(expand=False)
+
+        def reload():
+            table.delete(*table.get_children())
+            for user_id, employee in self.employees.items():
+                table.insert("", "end", iid=user_id, values=(employee["name"], f"{employee['daily_pay']:,.2f}"))
+            count.configure(text=f"{len(self.employees)} employees")
+
+        def remove():
+            selection = table.selection()
+            if not selection:
+                messagebox.showinfo("Remove employee", "Select an employee to remove.", parent=dialog)
+                return
+            name = self.employees[selection[0]]["name"]
+            if not messagebox.askokcancel(
+                    "Remove employee",
+                    f"Remove {name} from the attendance portal?\nTheir punches are kept but no longer shown "
+                    "or included in payroll, exports, and backups.", parent=dialog):
+                return
+            self.store.remove_employee(selection[0])
+            self.refresh()
+            reload()
+            self.status.set(f"{name} removed from the attendance portal")
+
+        ttk.Button(content, text="Remove selected", style="outline-danger.TButton", command=remove).pack(anchor="e", pady=8)
+        ttk.Separator(content).pack(fill="x", pady=8)
+        ttk.Label(content, text="Add employee", font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        form = ttk.Frame(content)
+        form.pack(fill="x", pady=8)
+        fields = {"id": tk.StringVar(), "name": tk.StringVar(), "pay": tk.StringVar(value=f"{DEFAULT_PAY:g}")}
+        for column, (key, label, width) in enumerate([("id", "Device ID", 10), ("name", "Name", 24), ("pay", "Daily pay", 10)]):
+            ttk.Label(form, text=label).grid(row=0, column=column, sticky="w", padx=(0, 8))
+            ttk.Entry(form, textvariable=fields[key], width=width).grid(row=1, column=column, sticky="w", padx=(0, 8), ipady=4)
+
+        def add():
+            try:
+                self.store.add_employee(fields["id"].get(), fields["name"].get(), fields["pay"].get())
+            except ValueError as exc:
+                messagebox.showerror("Add employee", str(exc), parent=dialog)
+                return
+            name = " ".join(fields["name"].get().split())
+            for variable in (fields["id"], fields["name"]):
+                variable.set("")
+            self.refresh()
+            reload()
+            self.status.set(f"{name} added to the attendance portal")
+
+        ttk.Button(form, text="Add employee", style="primary.TButton", command=add).grid(row=1, column=3, padx=(8, 0))
+        reload()
 
     def settings(self):
         dialog = tk.Toplevel(self.root)
@@ -435,7 +507,7 @@ class AttendoSyncApp:
         self.busy = busy
         for button in (self.fetch_btn, self.send_btn):
             button.configure(state="disabled" if busy or self.demo else "normal")
-        for widget in (self.export_btn, self.settings_btn, self.ip_entry):
+        for widget in (self.export_btn, self.settings_btn, self.manage_btn, self.ip_entry):
             widget.configure(state="disabled" if busy else "normal")
         self.progress.start(12) if busy else self.progress.stop()
 

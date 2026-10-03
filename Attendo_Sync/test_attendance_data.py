@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import tkinter
 import unittest
 from datetime import date
 from pathlib import Path
@@ -17,14 +18,23 @@ def punch(day, clock, mode, user_id="101"):
 
 
 class AttendanceTests(unittest.TestCase):
-    def test_pairs_breaks_and_duplicate_in(self):
-        daily = daily_summary([punch("01", "09:00", 0), punch("01", "09:01", 0),
-                               punch("01", "12:00", 1), punch("01", "13:00", 0),
-                               punch("01", "18:30", 1)])
+    def test_first_scan_is_in_last_scan_is_out(self):
+        daily = daily_summary([punch("01", "13:00", 0), punch("01", "09:00", 0),
+                               punch("01", "12:00", 0), punch("01", "18:30", 0)])
         entry = daily[("101", date(2026, 9, 1))]
-        self.assertEqual(entry["hours"], 8.5)
+        self.assertEqual(entry["clock_in"].strftime("%H:%M"), "09:00")
+        self.assertEqual(entry["clock_out"].strftime("%H:%M"), "18:30")
+        self.assertEqual(entry["hours"], 9.5)
         self.assertTrue(entry["complete"])
-        self.assertIn("Repeated in", entry["issues"])
+        self.assertEqual(entry["issues"], "OK")
+
+    def test_single_scan_is_missing_clock_out(self):
+        entry = daily_summary([punch("01", "09:00", 0), punch("01", "09:00", 0),
+                               {**punch("01", "09:00", 0), "timestamp": "2026-09-01T09:02:00"}])[("101", date(2026, 9, 1))]
+        self.assertIsNone(entry["clock_out"])
+        self.assertFalse(entry["complete"])
+        self.assertEqual(entry["hours"], 0)
+        self.assertEqual(entry["issues"], "Missing clock-out")
 
     def test_net_overtime_and_deficit_pay(self):
         employees = {"101": {"name": "Anil", "daily_pay": 100}}
@@ -46,24 +56,47 @@ class AttendanceTests(unittest.TestCase):
         self.assertEqual(summary["review_days"], 1)
         self.assertEqual(monthly_summary(employees, daily_summary(rows), "2026-08")[0]["salary"], 0)
 
-    def test_unknown_modes_and_missing_in_not_paid(self):
+    def test_punch_mode_is_ignored(self):
         daily = daily_summary([punch("01", "09:00", 4), punch("01", "18:00", 1)])
-        self.assertFalse(daily[("101", date(2026, 9, 1))]["complete"])
+        self.assertTrue(daily[("101", date(2026, 9, 1))]["complete"])
+
+    def test_admins_retired_and_employees_managed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = AttendanceStore(Path(folder) / "attendance.db")
+            store.merge([{**punch("28", "09:00", 0, "1"), "user_name": "Bijoy"},
+                         {**punch("28", "17:30", 0, "1"), "user_name": "Bijoy"}],
+                        {"1": "Bijoy", "2": "Aju", "3": "Treesa"})
+            employees, rows = store.snapshot()
+            self.assertEqual(list(employees), ["3"])
+            self.assertEqual(rows, [])
+            store.merge([], {"1": "Bijoy"})
+            self.assertNotIn("1", store.snapshot()[0])
+            store.add_employee("30", "  New   Person ", 120)
+            self.assertEqual(store.snapshot()[0]["30"], {"name": "New Person", "daily_pay": 120})
+            with self.assertRaises(ValueError):
+                store.add_employee("30", "Duplicate")
+            with self.assertRaises(ValueError):
+                store.add_employee("31", "")
+            store.remove_employee("30")
+            store.merge([], {"30": "New Person"})
+            self.assertNotIn("30", store.snapshot()[0])
+            store.add_employee("30", "New Person")
+            self.assertIn("30", store.snapshot()[0])
 
     def test_history_dedup_rates_and_atomic_merge(self):
         with tempfile.TemporaryDirectory() as folder:
             store = AttendanceStore(Path(folder) / "attendance.db")
-            records = [punch("01", "09:00", 0), punch("01", "17:30", 1)]
+            records = [punch("28", "09:00", 0), punch("28", "17:30", 1)]
             store.merge(records, {"102": "Bindu"})
             store.set_pay("101", 150)
             store.merge(records)
-            store.merge([punch("02", "09:00", 0)])
+            store.merge([punch("29", "09:00", 0), punch("27", "09:00", 0)])
             employees, rows = store.snapshot()
             self.assertEqual(len(rows), 3)
             self.assertEqual(employees["101"]["daily_pay"], 150)
             self.assertIn("102", employees)
             with self.assertRaises(ValueError):
-                store.merge([punch("04", "09:00", 0), {"user_id": "101"}])
+                store.merge([punch("30", "09:00", 0), {"user_id": "101"}])
             self.assertEqual(len(store.snapshot()[1]), 3)
             for amount in [-1, float("nan"), float("inf")]:
                 with self.assertRaises(ValueError):
@@ -120,7 +153,7 @@ class IntegrationTests(unittest.TestCase):
         import queue
         with tempfile.TemporaryDirectory() as folder:
             store = AttendanceStore(Path(folder) / "history.sqlite3")
-            records = [punch("01", "09:00", 0), punch("01", "17:30", 1)]
+            records = [punch("28", "09:00", 0), punch("28", "17:30", 1)]
             worker = object.__new__(AttendoSyncApp)
             worker.store = store
             worker.events = queue.Queue()
@@ -172,17 +205,30 @@ class IntegrationTests(unittest.TestCase):
             try:
                 self.assertEqual(len(view.notebook.tabs()), 3)
                 self.assertEqual(len(view.daily_table.get_children()), 5)
+                self.assertEqual(view.daily_table.cget("columns"), ("name", "in", "out", "hours", "status"))
+                view.manage_employees()
+                root.update()
+                dialog = [child for child in root.winfo_children() if isinstance(child, tkinter.Toplevel)][-1]
+                dialog.destroy()
+                past = sorted(view.date_picker.cget("values"))[0]
+                self.assertLess(past, date.today().isoformat())
+                view.daily_date.set(past)
+                view.refresh_daily()
+                self.assertIn("OK", [view.daily_table.item(item)["values"][-1] for item in view.daily_table.get_children()])
                 self.assertEqual(view.salary_value.cget("style"), "Metric.TLabel")
                 self.assertGreaterEqual(int(app.ttkbootstrap.Style().lookup("Treeview", "rowheight")), 36)
                 view.month.set("2026-09")
                 view.refresh_month()
                 names = [view.monthly_table.item(item)["values"][0] for item in view.monthly_table.get_children()]
                 self.assertEqual(names, sorted(names, key=str.casefold))
-                view.employee_filter.set("Anil Kumar (101)")
+                view.chart_period.set("Till date")
                 view.draw_chart()
-                self.assertEqual(len(view.chart_lines), 1)
-                view.employee_filter.set("All employees")
+                self.assertEqual(len(view.chart_bars), len(view.employees))
+                view.chart_period.set("2026-09")
                 view.draw_chart()
+                anil = [info for info in view.chart_info if info[0] == "Anil Kumar"][0]
+                self.assertGreater(anil[1], 8)
+                self.assertGreater(anil[2], 0)
                 view.monthly_table.selection_set("101")
                 with patch("dashboard.simpledialog.askfloat", return_value=150), patch("dashboard.messagebox.askokcancel", return_value=True):
                     view.edit_rate()
