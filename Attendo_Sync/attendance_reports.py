@@ -1,6 +1,6 @@
 """Excel exports from the same summaries used by the dashboard."""
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -8,12 +8,13 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from attendance_data import daily_summary, monthly_summary
+from attendance_data import (STANDARD_HOURS, daily_summary, format_date, format_datetime, format_duration,
+                             month_display, monthly_summary)
 
 
-def export_workbook(path, employees, rows, month, today=None):
+def export_workbook(path, employees, rows, month, today=None, manual=None):
     today = today or date.today()
-    daily = daily_summary(rows)
+    daily = daily_summary(rows, manual)
     workbook = Workbook()
     workbook.remove(workbook.active)
 
@@ -45,39 +46,47 @@ def export_workbook(path, employees, rows, month, today=None):
         for (user_id, day), entry in sorted(daily.items(), key=lambda item: (
                 item[0][1], employees[item[0][0]]["name"].casefold(), item[0][0])):
             if day_filter(day):
-                yield [day.isoformat(), user_id, employees[user_id]["name"],
+                yield [format_date(day), user_id, employees[user_id]["name"], employees[user_id]["role"],
                        entry["clock_in"].strftime("%H:%M:%S") if entry["clock_in"] else "",
                        entry["clock_out"].strftime("%H:%M:%S") if entry["clock_out"] else "",
-                       round(entry["hours"], 4), entry["issues"]]
+                       round(entry["hours"], 4),
+                       format_duration(entry["hours"] - STANDARD_HOURS, signed=True) if entry["complete"] else "",
+                       entry["issues"]]
 
-    daily_headers = ["Date", "Employee ID", "Employee", "Clock-in", "Clock-out", "Hours", "Status"]
+    daily_headers = ["Date", "Employee ID", "Employee", "Role", "Clock-in", "Clock-out", "Hours",
+                     "Excess / deficit", "Status"]
     today_rows = list(daily_records(lambda day: day == today))
     recorded_ids = {row[1] for row in today_rows}
-    today_rows.extend([today.isoformat(), user_id, employee["name"], "", "", 0, "No punches"]
+    today_rows.extend([format_date(today), user_id, employee["name"], employee["role"], "", "", 0, "", "No punches"]
                       for user_id, employee in employees.items() if user_id not in recorded_ids)
     today_rows.sort(key=lambda row: (row[2].casefold(), row[1]))
     sheet("Today", daily_headers, today_rows)
-    sheet("Monthly payroll", ["Month", "Employee ID", "Employee", "Paid days", "Total hours",
-                              "Excess / deficit hours", "Extra days", "Review days", "Salary (INR)", "Daily pay (INR)"],
-          ([month, row["user_id"], row["name"], row["days"], row["hours"], row["net_hours"], row["extra_days"],
-            row["review_days"], row["salary"], row["daily_pay"]]
+    sheet("Monthly payroll", ["Month", "Employee ID", "Employee", "Role", "Paid days", "Total hours",
+                              "Excess / deficit", "Extra pay (INR)", "Remaining days", "Salary (INR)",
+                              "Hourly pay (INR)"],
+          ([month_display(month), row["user_id"], row["name"], row["role"], row["days"], row["hours"],
+            format_duration(row["net_hours"], signed=True), row["extra_pay"], row["remaining_days"],
+            row["salary"], row["hourly_pay"]]
            for row in monthly_summary(employees, daily, month, today)))
     sheet("Daily history", daily_headers, daily_records(lambda day: True))
     sheet("Raw punches", ["Employee ID", "Employee", "Timestamp", "Status", "Punch"],
-          ([row.get(key) for key in ("user_id", "user_name", "timestamp", "status", "punch")] for row in rows))
+          ([row["user_id"], row["user_name"], format_datetime(datetime.fromisoformat(row["timestamp"])),
+            row["status"], row["punch"]] for row in rows))
     sheet("Payroll policy", ["Setting", "Value"], [
-        ["Report month", month], ["Generated on", today.isoformat()], ["Standard day", "8.5 hours"],
-        ["Base pay", "Completed days x employee daily pay"],
-        ["Net hours", "Completed-day hours minus completed days x 8.5"],
-        ["Extra days", "Positive net hours / 8.5 (fractional days)"],
-        ["Overtime pay", "Extra days x daily pay x 2"],
-        ["Deficit deduction", "Negative net hours / 8.5 x daily pay"],
-        ["Incomplete days", "Only one scan in the day (no clock-out); excluded from payroll, shown as review days"],
+        ["Report month", month_display(month)], ["Generated on", format_date(today)], ["Standard day", "8.5 hours"],
+        ["Base pay", "Completed days x 8.5 hours x hourly pay of that month"],
+        ["Net hours", "Excess hours minus deficit hours: completed-day hours minus completed days x 8.5"],
+        ["Extra pay", "(Excess hours - deficit hours) x hourly pay x 2; negative when hours fall short"],
+        ["Salary", "Base pay + extra pay"],
+        ["No-extra-pay roles (Driver)", "No extra pay for extra hours; only a deficit reduces pay; excluded from average-hours figures"],
+        ["Remaining days", "Calendar days left in the month after today"],
+        ["Incomplete days", "Missing clock-in or clock-out; excluded from payroll until completed"],
         ["No punches", "No pay and no deficit; no work calendar is configured"],
-        ["Daily pay changes", "Current employee rate applies to all months"],
+        ["Hourly pay changes", "A new rate applies from the month it was set onward; earlier months keep their previous rate"],
         ["Punch interpretation", "First scan of the day = clock-in; last scan = clock-out (at least 60 minutes later, otherwise a double-scan); hours = clock-out minus clock-in"],
-        ["Data start", "Punches before 28 September 2026 were testing data and are excluded"],
-        ["Status", "OK when both clock-in and clock-out exist, otherwise Missing clock-out"],
+        ["Manual edits", "A clock-in or clock-out entered by hand replaces the device scan; status shows OK (manual)"],
+        ["Data start", "Punches before 28-09-2026 were testing data and are excluded"],
+        ["Status", "OK when both clock-in and clock-out exist, otherwise Missing clock-in / Missing clock-out"],
         ["Overnight shifts", "Not paired across midnight; each calendar day is evaluated on its own"],
     ])
     path = Path(path)

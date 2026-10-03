@@ -17,7 +17,7 @@ import gspread
 import ttkbootstrap
 from zk import ZK
 
-from attendance_data import AttendanceStore
+from attendance_data import AttendanceStore, month_display
 from dashboard import AttendoSyncApp
 
 # Next to the EXE when frozen, so the backup export lands beside it.
@@ -229,12 +229,13 @@ def standalone_self_test(report_path):
                         "credentials": "", "spreadsheet_id": "", "worksheet": ""}
             view = AttendoSyncApp(root, store, None, None, defaults, demo=True,
                                  logo_path=find_resource(ICON_PNG))
-            view.month.set(rows[0]["timestamp"][:7])
+            month = rows[0]["timestamp"][:7]
+            view.month.set(month_display(month))
             view.refresh_month()
             root.update()
             view.canvas.draw()
             view.figure.savefig(Path(folder) / "chart.png")
-            export_workbook(Path(folder) / "report.xlsx", employees, rows, view.month.get())
+            export_workbook(Path(folder) / "report.xlsx", employees, rows, month)
             workbook = load_workbook(Path(folder) / "report.xlsx")
             try:
                 if len(workbook.sheetnames) != 5 or len(view.notebook.tabs()) != 3:

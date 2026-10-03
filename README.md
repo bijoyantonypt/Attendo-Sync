@@ -51,20 +51,29 @@ first created. Demo mode disables fetching and cloud backup and uses a separate 
 
 ### Screens And Actions
 
-- **Dashboard**: current-month salary payable and average month-to-date hours per
-  employee. **Manage Employees** adds (device ID, name, daily pay) or removes employees;
-  removed employees are hidden from views, payroll, exports, and backups, and device
-  fetches do not bring them back. The bar chart shows each employee's average hours worked per
-  day (completed days only) for the selected month or **Till date**. Hover a bar for details.
-  Punches before 28 September 2026 were testing data and are not shown, exported, or backed up.
-  The chart month does not change the current-month KPI cards.
+- **Dashboard**: salary payable and average hours per employee for a selectable month
+  (default current month; past months show their own totals). **Manage Employees** adds
+  (device ID, name, hourly pay, role), removes employees, changes any employee's role, and
+  defines roles (default Driver, Cook, Quality, Cleaner, Normal). **Manage roles** adds, renames,
+  and deletes any role, and a checkbox marks roles that get no extra pay (Driver by default). The
+  default role for new employees (Normal) can be renamed but not deleted; deleting another role moves
+  its employees to the default role. An employee's role changes as soon as it is picked in the list.
+  Removed employees are hidden from views, payroll, exports,
+  and backups, and device fetches do not bring them back. The bar chart shows each employee's
+  average hours worked per day (completed days only) for the selected month or **Till date**.
+  Hover a bar for details. No-extra-pay roles are excluded from the chart and the average-hours card.
+  Punches before 28-09-2026 were testing data and are not shown, exported, or backed up.
 - **Daily Attendance**: pick any recorded date (default today). Shows alphabetical employee names,
-  clock-in (first scan), clock-out (last scan), hours worked, and status (OK / Missing clock-out).
-- **Monthly Attendance**: select any recorded month. View completed paid days,
-  total hours, net excess/deficit hours, fractional extra days, days needing review,
-  and salary. Double-click the final **Daily pay (edit)** cell, press Enter on a
-  selected employee, or use the right-click menu to change their rate. Horizontal
-  scrolling exposes remaining columns in smaller windows.
+  clock-in (first scan), clock-out (last scan), hours worked, excess / deficit against 8.5 hours
+  (for example `+2 hours 30 minutes`), and status (OK / OK (manual) / Missing clock-in / Missing
+  clock-out). Select an employee and use **Edit clock-in / clock-out** (or double-click the row) to
+  enter a missing time by hand; a manual time replaces the device scan and a cleared field
+  goes back to the scan.
+- **Monthly Attendance**: select any recorded month. View role, completed paid days, total
+  hours, excess / deficit in hours and minutes, extra pay, remaining days in the month, and salary.
+  Double-click the final **Hourly pay (edit)** cell, press Enter on a selected employee, or use the
+  right-click menu to change their rate from the selected month onward (earlier months keep their rate). Horizontal scrolling exposes remaining columns in smaller windows.
+- Dates are shown as DD-MM-YYYY and months as MM-YYYY, in the app and the Excel export.
 - **Fetch & Update**: fetch from the configured IP (default `192.168.29.201`, port
   `4370`), merge punches into local history, and refresh all views. No Google key is needed.
 - **Fetch & Send**: perform the same local update, then back up all locally retained
@@ -80,24 +89,26 @@ first created. Demo mode disables fetching and cloud backup and uses a separate 
 
 ### Payroll Rules
 
-Default pay is **INR 100 for 8.5 hours**. Every employee has an editable daily rate.
+Every employee has an editable **hourly pay** (new employees default to INR 12; databases created
+before hourly pay was introduced are converted from the old daily rate divided by 8.5).
 
 - The device sends every scan with the same punch mode, so the **first scan of a day is the
   clock-in and the last scan is the clock-out**. Hours = clock-out minus clock-in. Status is
   **OK** when both exist; a lone scan (or scans under 60 minutes apart, treated as a double-scan)
-  is **Missing clock-out**.
-- Days with a missing clock-out are 
-  until a later scan completes them. The chart leaves gaps for incomplete days and future dates.
-- Net hours = completed-day hours minus `8.5 x completed days`.
-- Extra days = `max(0, net hours / 8.5)`, retaining fractional days.
-- Salary = completed days x daily pay, plus positive extra days x daily pay x **2**.
-  Negative net hours reduce pay at the normal rate: `net hours / 8.5 x daily pay`.
-- Excess and deficit hours offset each other within the selected month. For example,
-  at INR 100/day, one 9.5-hour day pays INR 123.53; one 7.5-hour day pays INR 88.24.
+  is **Missing clock-out**. Manually entered times replace the scans.
+- Days without both times are incomplete and excluded from paid days and payroll until completed.
+- Net hours = excess minus deficit = completed-day hours minus `8.5 x completed days`.
+- Extra pay = net hours x hourly pay x **2** for the month (negative when hours fall short).
+  Roles marked no-extra-pay (Driver) get no extra pay; only a deficit reduces their pay.
+- Salary = completed days x 8.5 x hourly pay + extra pay (never below zero).
+- Excess and deficit hours offset each other within the selected month. For example, at
+  INR 10/hour, one 9.5-hour day pays INR 105 (85 base + 20 extra); one 7.5-hour day pays INR 65.
+- Remaining days = calendar days left in the month after today (0 for past months).
 - Days with no punches have no pay and no deficit. No holiday, leave, or scheduled
-  work calendar is assumed. Average hours includes all locally known employees.
-- Rate edits recalculate **all months** using the current rate; the app confirms this
-  before saving. It does not maintain effective-dated rate changes or finalized payroll.
+  work calendar is assumed. No-extra-pay roles are left out of average-hours figures.
+- A rate edit made while viewing a month applies from that month onward and replaces any later
+  rate changes; earlier months keep their previous rate. Finalized payroll is not locked, so
+  changing hours or manual times still recalculates a month.
 
 ### Storage And Verification
 
